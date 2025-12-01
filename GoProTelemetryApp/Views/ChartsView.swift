@@ -9,386 +9,237 @@ import SwiftUI
 import Charts
 
 struct ChartsView: View {
-    let session: TelemetrySession
+    // MARK: - Properties
     
-    @State private var selectedChart: ChartType = .speed
-    @State private var hoveredDataPoint: TelemetryDataPoint?
+    let data: [TelemetryData]
     
-    enum ChartType: String, CaseIterable {
+    @State private var selectedMetric: MetricType = .speed
+    @State private var selectedX: Double? // Posição do cursor (Timestamp)
+    
+    // MARK: - Enums
+    
+    enum MetricType: String, CaseIterable, Identifiable {
         case speed = "Velocidade"
         case altitude = "Altitude"
-        case acceleration = "Aceleração"
-        case temperature = "Temperatura"
-        case gyro = "Giroscópio"
+        case acceleration = "Força G"
         
-        var icon: String {
-            switch self {
-            case .speed: return "speedometer"
-            case .altitude: return "mountain.2"
-            case .acceleration: return "bolt"
-            case .temperature: return "thermometer"
-            case .gyro: return "gyroscope"
-            }
-        }
-        
-        var color: Color {
-            switch self {
-            case .speed: return .blue
-            case .altitude: return .green
-            case .acceleration: return .orange
-            case .temperature: return .red
-            case .gyro: return .purple
-            }
-        }
+        var id: String { rawValue }
         
         var unit: String {
             switch self {
             case .speed: return "km/h"
             case .altitude: return "m"
             case .acceleration: return "G"
-            case .temperature: return "°C"
-            case .gyro: return "rad/s"
+            }
+        }
+        
+        var color: Color {
+            switch self {
+            case .speed: return Theme.Data.color(for: .gps)
+            case .altitude: return Theme.Data.color(for: .gyroscope) // Usando cor secundária
+            case .acceleration: return Theme.Data.color(for: .accelerometer)
             }
         }
     }
+    
+    // MARK: - Body
     
     var body: some View {
-        VStack(spacing: Theme.spacingLarge) {
-            // Chart Type Picker
-            chartTypePicker
-            
-            // Main Chart
-            mainChartSection
-            
-            // Mini Charts Grid
-            miniChartsGrid
-        }
-        .modernCard()
-        .padding(Theme.spacingLarge)
-    }
-    
-    // MARK: - Chart Type Picker
-    private var chartTypePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.spacingMedium) {
-                ForEach(ChartType.allCases, id: \.self) { chartType in
-                    ChartTypeButton(
-                        chartType: chartType,
-                        isSelected: selectedChart == chartType
-                    ) {
-                        selectedChart = chartType
+        VStack(spacing: Theme.Spacing.medium) {
+            // 1. Controles
+            if !data.isEmpty {
+                Picker("Métrica", selection: $selectedMetric) {
+                    ForEach(MetricType.allCases) { metric in
+                        Text(metric.rawValue).tag(metric)
                     }
                 }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 400)
+                .padding(.top, Theme.Spacing.small)
             }
-            .padding(.horizontal, Theme.spacingLarge)
+            
+            // 2. Área do Gráfico
+            if data.isEmpty {
+                EmptyStateView(
+                    title: "Sem Dados para Gráfico",
+                    systemImage: "chart.xyaxis.line",
+                    description: "Importe um vídeo com telemetria para visualizar os gráficos."
+                )
+            } else {
+                chartContent
+                    .padding()
+                    .cardStyle()
+            }
         }
-        .padding(.top, Theme.spacingLarge)
+        .padding(Theme.padding)
+        .background(Theme.background)
     }
     
-    // MARK: - Main Chart Section
-    private var mainChartSection: some View {
-        VStack(spacing: Theme.spacingMedium) {
-            Chart {
-                ForEach(session.points.prefix(500)) { point in
-                    LineMark(
-                        x: .value("Tempo", point.timestamp - (session.points.first?.timestamp ?? 0)),
-                        y: .value(selectedChart.rawValue, getValue(for: point, chartType: selectedChart))
-                    )
-                    .foregroundStyle(selectedChart.color.gradient)
-                    .interpolationMethod(.catmullRom)
+    // MARK: - Chart Content
+    
+    @ViewBuilder
+    private var chartContent: some View {
+        VStack(alignment: .leading) {
+            // Header com Valor Selecionado
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(selectedMetric.rawValue)
+                        .font(Theme.Font.label)
+                        .foregroundColor(Theme.secondary)
                     
-                    if let hovered = hoveredDataPoint, hovered.id == point.id {
-                        PointMark(
-                            x: .value("Tempo", point.timestamp - (session.points.first?.timestamp ?? 0)),
-                            y: .value(selectedChart.rawValue, getValue(for: point, chartType: selectedChart))
-                        )
-                        .foregroundStyle(.red)
-                        .symbolSize(100)
+                    if let selectedValue = selectedValue {
+                        Text("\(String(format: "%.1f", selectedValue)) \(selectedMetric.unit)")
+                            .font(Theme.Font.valueLarge)
+                            .foregroundColor(selectedMetric.color)
+                            .contentTransition(.numericText())
+                    } else {
+                        // Valor padrão (Média ou Máximo) quando nada selecionado
+                        Text("-")
+                            .font(Theme.Font.valueLarge)
+                            .foregroundColor(Theme.secondary)
                     }
+                }
+                Spacer()
+                
+                if let selectedTime = selectedTime {
+                    Text("Tempo: \(selectedTime)")
+                        .font(Theme.Font.mono)
+                        .padding(6)
+                        .background(Theme.surfaceSecondary)
+                        .cornerRadius(4)
+                }
+            }
+            
+            // O Gráfico
+            Chart {
+                ForEach(downsampledData) { point in
+                    // Linha Principal
+                    LineMark(
+                        x: .value("Tempo", point.timestamp),
+                        y: .value("Valor", value(for: point))
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [selectedMetric.color.opacity(0.8), selectedMetric.color],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
+                    )
+                    .interpolationMethod(.catmullRom) // Suavização
+                    
+                    // Área abaixo da linha (Gradiente)
+                    AreaMark(
+                        x: .value("Tempo", point.timestamp),
+                        y: .value("Valor", value(for: point))
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [selectedMetric.color.opacity(0.3), selectedMetric.color.opacity(0.0)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                }
+                
+                // Cursor Interativo (RuleMark)
+                if let selectedX {
+                    RuleMark(x: .value("Cursor", selectedX))
+                        .foregroundStyle(Theme.secondary)
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
+                        .annotation(position: .top) {
+                            Circle()
+                                .fill(selectedMetric.color)
+                                .frame(width: 10, height: 10)
+                                .shadow(radius: 2)
+                        }
                 }
             }
             .chartYAxis {
                 AxisMarks(position: .leading)
             }
             .chartXAxis {
-                AxisMarks(position: .bottom)
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine()
+                    AxisTick()
+                    if let time = value.as(Double.self) {
+                        AxisValueLabel(time.formattedTime)
+                    }
+                }
             }
             .chartOverlay { proxy in
                 GeometryReader { geometry in
-                    Rectangle()
-                        .fill(.clear)
-                        .contentShape(Rectangle())
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .onHover { isHovering in
+                            if !isHovering { selectedX = nil }
+                        }
                         .gesture(
                             DragGesture()
                                 .onChanged { value in
-                                    updateHoveredPoint(
-                                        at: value.location,
-                                        proxy: proxy,
-                                        geometry: geometry
-                                    )
+                                    // Converte posição X do mouse para Timestamp
+                                    let origin = geometry[proxy.plotAreaFrame].origin
+                                    let x = value.location.x - origin.x
+                                    if let timestamp = proxy.value(atX: x, as: Double.self) {
+                                        // Trava dentro dos limites do vídeo
+                                        self.selectedX = min(max(0, timestamp), data.last?.timestamp ?? 0)
+                                    }
                                 }
-                                .onEnded { _ in
-                                    hoveredDataPoint = nil
-                                }
+                                .onEnded { _ in selectedX = nil }
                         )
                 }
             }
-            .frame(height: 300)
-            .padding(.horizontal, Theme.spacingLarge)
-            
-            // Chart Info
-            if let hoveredPoint = hoveredDataPoint {
-                HoverInfoView(point: hoveredPoint, chartType: selectedChart)
-                    .padding(.horizontal, Theme.spacingLarge)
-            }
+            .frame(height: 350)
         }
     }
     
-    // MARK: - Mini Charts Grid
-    private var miniChartsGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: Theme.spacingMedium) {
-            ForEach(ChartType.allCases, id: \.self) { chartType in
-                if chartType != selectedChart {
-                    MiniChartView(
-                        session: session,
-                        chartType: chartType,
-                        isSelected: false
-                    ) {
-                        selectedChart = chartType
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, Theme.spacingLarge)
-        .padding(.bottom, Theme.spacingLarge)
-    }
+    // MARK: - Helpers & Logic
     
-    // MARK: - Helper Methods
-    private func getValue(for point: TelemetryDataPoint, chartType: ChartType) -> Double {
-        switch chartType {
-        case .speed:
-            return point.speed ?? 0
-        case .altitude:
-            return point.altitude ?? 0
-        case .acceleration:
-            return TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.accelerationX,
-                y: point.accelerationY,
-                z: point.accelerationZ
-            ) ?? 0
-        case .temperature:
-            return point.temperature ?? 0
-        case .gyro:
-            return TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.gyroX,
-                y: point.gyroY,
-                z: point.gyroZ
-            ) ?? 0
-        }
-    }
-    
-    private func updateHoveredPoint(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
-        let xPosition = location.x - geometry[proxy.plotAreaFrame].origin.x
-        guard let timestamp: Double = proxy.value(atX: xPosition) else { return }
+    /// Dados otimizados para renderização (Downsampling simples)
+    /// Se tiver 50.000 pontos, o gráfico trava. Pegamos 1 a cada N pontos.
+    private var downsampledData: [TelemetryData] {
+        let maxPoints = 1000 // Limite visual razoável
+        if data.count <= maxPoints { return data }
         
-        let absoluteTimestamp = timestamp + (session.points.first?.timestamp ?? 0)
-        hoveredDataPoint = session.points.min(by: {
-            abs($0.timestamp - absoluteTimestamp) < abs($1.timestamp - absoluteTimestamp)
-        })
-    }
-}
-
-// MARK: - Supporting Views
-struct ChartTypeButton: View {
-    let chartType: ChartsView.ChartType
-    let isSelected: Bool
-    let action: () -> Void
-    
-    @State private var isHovered = false
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: chartType.icon)
-                    .font(.system(size: 14, weight: .medium))
-                
-                Text(chartType.rawValue)
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundColor(isSelected ? .white : Theme.textSecondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? chartType.color : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(chartType.color.opacity(0.3), lineWidth: 1)
-                    )
-            )
+        let step = data.count / maxPoints
+        var result: [TelemetryData] = []
+        for index in stride(from: 0, to: data.count, by: step) {
+            result.append(data[index])
         }
-        .buttonStyle(.plain)
-        .scaleEffect(isHovered ? 1.05 : 1.0)
-        .animation(.spring(response: 0.3), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-}
-
-struct MiniChartView: View {
-    let session: TelemetrySession
-    let chartType: ChartsView.ChartType
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: chartType.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(chartType.color)
-                    
-                    Text(chartType.rawValue)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Theme.textPrimary)
-                    
-                    Spacer()
-                }
-                
-                Chart {
-                    ForEach(session.points.prefix(100)) { point in
-                        LineMark(
-                            x: .value("Time", point.timestamp),
-                            y: .value("Value", getValue(for: point))
-                        )
-                        .foregroundStyle(chartType.color.gradient)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                    }
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(height: 40)
-            }
-            .padding(12)
-            .background(Theme.cardBackground)
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(chartType.color.opacity(0.2), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
+        return result
     }
     
-    private func getValue(for point: TelemetryDataPoint) -> Double {
-        switch chartType {
-        case .speed: return point.speed ?? 0
-        case .altitude: return point.altitude ?? 0
-        case .acceleration:
-            return TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.accelerationX,
-                y: point.accelerationY,
-                z: point.accelerationZ
-            ) ?? 0
-        case .temperature: return point.temperature ?? 0
-        case .gyro:
-            return TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.gyroX,
-                y: point.gyroY,
-                z: point.gyroZ
-            ) ?? 0
+    /// Extrai o valor numérico baseado na métrica selecionada
+    private func value(for point: TelemetryData) -> Double {
+        switch selectedMetric {
+        case .speed: return point.speed2D * 3.6 // m/s -> km/h
+        case .altitude: return point.altitude
+        case .acceleration: return point.acceleration?.magnitude ?? 0.0
         }
     }
-}
-
-struct HoverInfoView: View {
-    let point: TelemetryDataPoint
-    let chartType: ChartsView.ChartType
     
-    var body: some View {
-        HStack(spacing: Theme.spacingLarge) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Tempo: \(formatTime(point.timestamp))")
-                    .font(.system(size: 12, weight: .medium))
-                
-                if let lat = point.latitude, let lon = point.longitude {
-                    Text("Posição: \(String(format: "%.6f", lat)), \(String(format: "%.6f", lon))")
-                        .font(.system(size: 12, weight: .medium))
-                }
-            }
-            .foregroundColor(Theme.textSecondary)
-            
-            Spacer()
-            
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("\(getValue().formatted(precision: 2)) \(chartType.unit)")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(Theme.textPrimary)
-                
-                Text(chartType.rawValue)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
-            }
+    /// Encontra o valor exato no cursor (interpolação ou busca simples)
+    private var selectedValue: Double? {
+        guard let time = selectedX else { return nil }
+        // Busca o ponto mais próximo (pode ser otimizado com busca binária se necessário)
+        if let point = data.min(by: { abs($0.timestamp - time) < abs($1.timestamp - time) }) {
+            return value(for: point)
         }
-        .padding(12)
-        .background(Theme.cardBackground)
-        .cornerRadius(8)
+        return nil
     }
     
-    private func formatTime(_ timestamp: Double) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.minute, .second]
-        formatter.unitsStyle = .positional
-        formatter.zeroFormattingBehavior = .pad
-        return formatter.string(from: timestamp) ?? "0:00"
-    }
-    
-    private func getValue() -> Double {
-        switch chartType {
-        case .speed: return point.speed ?? 0
-        case .altitude: return point.altitude ?? 0
-        case .acceleration:
-            return TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.accelerationX,
-                y: point.accelerationY,
-                z: point.accelerationZ
-            ) ?? 0
-        case .temperature: return point.temperature ?? 0
-        case .gyro:
-            return TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.gyroX,
-                y: point.gyroY,
-                z: point.gyroZ
-            ) ?? 0
-        }
+    private var selectedTime: String? {
+        guard let time = selectedX else { return nil }
+        return time.formattedTime
     }
 }
 
 // MARK: - Preview
+
 #Preview {
-    ChartsView(session: TelemetrySession(
-        videoURL: URL(string: "https://example.com/video.mp4")!,
-        duration: 60.0,
-        points: [
-            TelemetryDataPoint(
-                timestamp: 0,
-                latitude: -23.5505,
-                longitude: -46.6333,
-                altitude: 760,
-                speed: 15.0,
-                accelerationX: 0.1,
-                accelerationY: 0.2,
-                accelerationZ: 9.8,
-                gyroX: 0.05,
-                gyroY: 0.1,
-                gyroZ: 0.02,
-                temperature: 25.0
-            )
-        ],
-        startTime: Date(),
-        deviceName: "GoPro Hero 11"
-    ))
+    ChartsView(data: [
+        TelemetryData(timestamp: 0, latitude: 0, longitude: 0, altitude: 10, speed2D: 5, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(timestamp: 1, latitude: 0, longitude: 0, altitude: 12, speed2D: 8, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(timestamp: 2, latitude: 0, longitude: 0, altitude: 15, speed2D: 12, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(timestamp: 3, latitude: 0, longitude: 0, altitude: 14, speed2D: 10, speed3D: 0, acceleration: nil, gyro: nil),
+    ])
     .frame(width: 800, height: 600)
 }

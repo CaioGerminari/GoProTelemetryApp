@@ -9,59 +9,51 @@ import SwiftUI
 
 @main
 struct GoProTelemetryApp: App {
-    @StateObject private var settings = AppSettings()
+    // MARK: - Global State
+    
+    // Instância única das configurações compartilhada por todo o ciclo de vida do app
+    @StateObject private var appSettings = AppSettings()
     
     var body: some Scene {
+        // 1. Janela Principal
         WindowGroup {
             ContentView()
-                .environmentObject(settings)
+                // Injeta as configurações no ambiente.
+                // Isso permite que Views profundas acessem @EnvironmentObject var settings: AppSettings
+                .environmentObject(appSettings)
+                
+                // Aplica o tema escolhido (Claro/Escuro) globalmente na janela
+                .preferredColorScheme(appSettings.appearance.theme.systemColorScheme)
+                
+                // Define tamanho mínimo da janela
+                .frame(minWidth: 1000, minHeight: 700)
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentMinSize)
         .commands {
+            // Adiciona comandos padrão de barra lateral (Sidebar) no menu "View"
+            SidebarCommands()
+            
+            // Adiciona comandos de importação/exportação no menu "File"
             CommandGroup(replacing: .newItem) {
                 Button("Abrir Vídeo...") {
-                    NotificationCenter.default.post(name: .openVideoFile, object: nil)
+                    // Envia uma notificação para o ViewModel do ContentView abrir o diálogo
+                    // (Workaround comum em SwiftUI para menus globais)
+                    NotificationCenter.default.post(name: Notification.Name("OpenVideoFile"), object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
-                
-                Button("Novo") {
-                    NotificationCenter.default.post(name: .newFile, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: .command)
-            }
-            
-            CommandGroup(replacing: .importExport) {
-                Button("Exportar Telemetria...") {
-                    NotificationCenter.default.post(name: .exportTelemetry, object: nil)
-                }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
-            }
-            
-            CommandGroup(after: .toolbar) {
-                Button("Configurações") {
-                    // Abrir settings programaticamente
-                    if #available(macOS 13, *) {
-                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                    } else {
-                        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                    }
-                }
-                .keyboardShortcut(",", modifiers: .command)
             }
         }
         
+        // 2. Janela de Preferências (macOS Nativo)
+        // Acessível via Menu "GoProTelemetryApp" > "Settings..." ou Cmd+,
         Settings {
-            SettingsView()
-                .environmentObject(settings)
-                .frame(width: 600, height: 700)
+            SettingsView(settings: appSettings)
+                .environmentObject(appSettings) // Garante que previews dentro de Settings funcionem
         }
     }
 }
 
-// Notifications para comandos do menu
+// MARK: - Notifications
+// Extensão para facilitar o envio de comandos via Menu Bar
 extension Notification.Name {
-    static let openVideoFile = Notification.Name("openVideoFile")
-    static let newFile = Notification.Name("newFile")
-    static let exportTelemetry = Notification.Name("exportTelemetry")
+    static let openVideoFile = Notification.Name("OpenVideoFile")
 }

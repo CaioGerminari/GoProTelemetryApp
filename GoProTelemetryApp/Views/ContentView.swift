@@ -6,294 +6,197 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @StateObject private var parserService = GPMFParserService()
-    @StateObject private var fileService = FileManagerService()
-    @StateObject private var exportService = ExportService()
-    
-    @State private var selectedVideoURL: URL?
-    @State private var telemetrySession: TelemetrySession?
-    @State private var showingError = false
-    @State private var errorMessage = ""
-    @State private var showingExportSheet = false
+    @StateObject private var viewModel = TelemetryViewModel()
+    @State private var selectedTab: Int = 0
+    @State private var isDropTargeted: Bool = false
     
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.backgroundColor.ignoresSafeArea()
-                
-                Group {
-                    if parserService.isProcessing {
-                        ProcessingView(
-                            progress: parserService.progress,
-                            status: parserService.currentStatus
-                        )
-                    } else if let session = telemetrySession {
-                        TelemetryView(
-                            session: session,
-                            exportService: exportService
-                        )
-                    } else {
-                        WelcomeContentView(onSelectVideo: selectVideo)
-                    }
-                }
+        ZStack {
+            // 1. Conteúdo Principal
+            if viewModel.session != nil {
+                MainTabView(viewModel: viewModel, selectedTab: $selectedTab)
+            } else {
+                WelcomeView(viewModel: viewModel, isTargeted: isDropTargeted)
             }
-            .navigationTitle("GoPro Telemetry Extractor")
-            .toolbar {
-                if telemetrySession != nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        SecondaryButton(
-                            title: "Novo Arquivo",
-                            icon: "plus"
-                        ) {
-                            resetSelection()
-                        }
-                    }
-                }
+            
+            // 2. Overlays Globais (Loading & Erro)
+            if viewModel.isProcessing {
+                LoadingView(message: viewModel.processingMessage)
             }
-            .alert("Erro", isPresented: $showingError) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
-            }
-            .sheet(isPresented: $showingExportSheet) {
-                if let session = telemetrySession {
-                    ExportView(
-                        session: session,
-                        exportService: exportService
-                    ) { exportedURL in
-                        // Handle successful export if needed
-                        print("Arquivo exportado: \(exportedURL.lastPathComponent)")
+        }
+        // Configurações da Janela
+        .frame(minWidth: 1000, minHeight: 700)
+        .background(Theme.background)
+        .alert("Ocorreu um erro", isPresented: $viewModel.showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(viewModel.errorMessage ?? "Erro desconhecido.")
+        }
+        // Suporte a Drag & Drop
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
+    }
+    
+    // MARK: - Helpers
+    
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        
+        provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { (urlData, error) in
+            DispatchQueue.main.async {
+                if let data = urlData as? Data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    Task {
+                        await viewModel.processVideo(url: url)
                     }
                 }
             }
         }
-        .frame(minWidth: 1000, idealWidth: 1200, minHeight: 700, idealHeight: 900)
-        .preferredColorScheme(.dark)
-        .onReceive(NotificationCenter.default.publisher(for: .openVideoFile)) { _ in
-            selectVideo()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .newFile)) { _ in
-            resetSelection()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .exportTelemetry)) { _ in
-            if telemetrySession != nil {
-                showingExportSheet = true
-            }
-        }
-    }
-    
-    // MARK: - Actions
-    private func selectVideo() {
-        Task {
-            if let url = await fileService.selectVideoFile() {
-                await processVideo(url)
-            }
-        }
-    }
-    
-    private func processVideo(_ url: URL) async {
-        do {
-            selectedVideoURL = url
-            let session = try await parserService.parseTelemetry(from: url)
-            await MainActor.run {
-                telemetrySession = session
-            }
-        } catch let error as GPMFError {
-            await MainActor.run {
-                switch error {
-                case .invalidData:
-                    errorMessage = "Este vídeo não contém dados de telemetria GPMF. Apenas vídeos GoPro com telemetria habilitada são suportados."
-                case .parsingFailed:
-                    errorMessage = "Falha ao processar dados de telemetria do vídeo. O arquivo pode estar corrompido."
-                case .unsupportedFormat:
-                    errorMessage = "Formato de vídeo não suportado. Use arquivos MP4, MOV ou M4V da GoPro."
-                case .fileAccessDenied:
-                    errorMessage = "Não foi possível acessar o arquivo de vídeo. Verifique as permissões."
-                }
-                showingError = true
-            }
-        } catch {
-            await MainActor.run {
-                errorMessage = "Falha ao processar vídeo: \(error.localizedDescription)"
-                showingError = true
-            }
-        }
-    }
-    
-    private func resetSelection() {
-        selectedVideoURL = nil
-        telemetrySession = nil
+        return true
     }
 }
 
-// MARK: - Welcome Content View
-struct WelcomeContentView: View {
-    let onSelectVideo: () -> Void
-    @State private var isHovered = false
+// MARK: - Subviews
+
+/// Tela principal com abas quando há uma sessão ativa
+struct MainTabView: View {
+    @ObservedObject var viewModel: TelemetryViewModel
+    @Binding var selectedTab: Int
     
     var body: some View {
-        VStack(spacing: Theme.spacingXLarge) {
-            // Header
-            VStack(spacing: Theme.spacingMedium) {
-                Image(systemName: "camera.aperture")
-                    .font(.system(size: 80, weight: .thin))
-                    .foregroundStyle(Theme.primaryGradient)
-                    .symbolEffect(.bounce, options: .repeating, value: isHovered)
-                
-                Text("GoPro Telemetry Extractor")
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                
-                Text("Extraia dados de telemetria avançados de seus vídeos GoPro")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.top, 60)
+        TabView(selection: $selectedTab) {
+            // Aba 1: Dashboard
+            TelemetryView(viewModel: viewModel)
+                .tabItem {
+                    Label("Resumo", systemImage: "speedometer")
+                }
+                .tag(0)
             
-            // Feature Grid
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: Theme.spacingMedium) {
-                WelcomeFeatureCard(
-                    icon: "location.fill",
-                    title: "GPS Preciso",
-                    description: "Dados de localização com alta precisão",
-                    color: .blue
-                )
-                
-                WelcomeFeatureCard(
-                    icon: "gyroscope",
-                    title: "Sensores IMU",
-                    description: "Acelerômetro, giroscópio e magnetômetro",
-                    color: .green
-                )
-                
-                WelcomeFeatureCard(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "Análise Avançada",
-                    description: "Gráficos e estatísticas detalhadas",
-                    color: .orange
-                )
-                
-                WelcomeFeatureCard(
-                    icon: "square.and.arrow.up",
-                    title: "Multi-Formato",
-                    description: "Exporte para DaVinci, FCPX e mais",
-                    color: .purple
-                )
-            }
-            .padding(.horizontal, Theme.spacingXLarge)
+            // Aba 2: Mapa
+            MapView(telemetryData: viewModel.session?.dataPoints ?? [])
+                .tabItem {
+                    Label("Mapa", systemImage: "map")
+                }
+                .tag(1)
             
+            // Aba 3: Gráficos
+            ChartsView(data: viewModel.session?.dataPoints ?? [])
+                .tabItem {
+                    Label("Gráficos", systemImage: "chart.xyaxis.line")
+                }
+                .tag(2)
+            
+            // Aba 4: Lista de Dados
+            DataView(data: viewModel.session?.dataPoints ?? [])
+                .tabItem {
+                    Label("Dados", systemImage: "list.bullet.rectangle")
+                }
+                .tag(3)
+            
+            // Aba 5: Exportação
+            ExportView(viewModel: viewModel)
+                .tabItem {
+                    Label("Exportar", systemImage: "square.and.arrow.up")
+                }
+                .tag(4)
+        }
+        .padding(Theme.Spacing.small)
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button(action: viewModel.clearSession) {
+                    Label("Fechar Vídeo", systemImage: "xmark.circle")
+                }
+            }
+        }
+    }
+}
+
+/// Tela de boas-vindas (Estado vazio)
+struct WelcomeView: View {
+    @ObservedObject var viewModel: TelemetryViewModel
+    var isTargeted: Bool
+    
+    @State private var isHovering = false
+    
+    var body: some View {
+        VStack(spacing: Theme.Spacing.extraLarge) {
             Spacer()
             
-            // Action Button
-            PrimaryButton(
-                title: "Selecionar Vídeo GoPro",
-                icon: "video.fill",
-                action: onSelectVideo
-            )
-            .padding(.bottom, 60)
-        }
-        .padding(Theme.spacingXLarge)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                isHovered.toggle()
+            // Header
+            VStack(spacing: Theme.Spacing.medium) {
+                Image(systemName: "camera.aperture")
+                    .font(.system(size: 80))
+                    .foregroundStyle(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .symbolEffect(.bounce, options: .repeating, value: isHovering)
+                
+                Text("GoPro Telemetry Extractor")
+                    .font(Theme.Font.valueLarge)
+                    .foregroundColor(Theme.primary)
+                
+                Text("Arraste seu vídeo aqui ou clique para selecionar")
+                    .font(.title3)
+                    .foregroundColor(Theme.secondary)
             }
+            .onHover { isHovering = $0 }
+            
+            // Botão Principal
+            Button(action: {
+                viewModel.selectFile()
+            }) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                    Text("Selecionar Arquivo")
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .font(.headline)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(Theme.primary)
+            
+            // Feature Grid (Resumido)
+            HStack(spacing: 40) {
+                FeatureItem(icon: "map.fill", text: "GPS Track")
+                FeatureItem(icon: "chart.bar.fill", text: "Sensores IMU")
+                FeatureItem(icon: "square.and.arrow.up.fill", text: "Exportação")
+            }
+            .padding(.top, 40)
+            .opacity(0.6)
+            
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Feedback visual do Drag & Drop
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(isTargeted ? Theme.primary : Color.clear, lineWidth: 4)
+                .background(isTargeted ? Theme.primary.opacity(0.1) : Color.clear)
+        )
+        .padding(20)
     }
 }
 
-// MARK: - Welcome Feature Card
-struct WelcomeFeatureCard: View {
+struct FeatureItem: View {
     let icon: String
-    let title: String
-    let description: String
-    let color: Color
-    
-    @State private var isHovered = false
+    let text: String
     
     var body: some View {
-        VStack(spacing: Theme.spacingMedium) {
+        VStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 32, weight: .medium))
-                .foregroundColor(.white)
-                .frame(width: 60, height: 60)
-                .background(
-                    LinearGradient(
-                        colors: [color, color.opacity(0.8)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .scaleEffect(isHovered ? 1.1 : 1.0)
-            
-            VStack(spacing: Theme.spacingSmall) {
-                Text(title)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Theme.textPrimary)
-                
-                Text(description)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .padding(Theme.spacingLarge)
-        .modernCard()
-        .scaleEffect(isHovered ? 1.02 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
+                .font(.title2)
+            Text(text)
+                .font(.caption)
         }
     }
 }
 
-// MARK: - Preview
-#Preview {
-    ContentView()
-}
+// MARK: - Previews
 
-#Preview("Processing") {
+#Preview("Empty State") {
     ContentView()
-        .overlay(
-            ProcessingView(
-                progress: 0.75,
-                status: "Processando dados de telemetria..."
-            )
-        )
-}
-
-#Preview("With Session") {
-    let mockSession = TelemetrySession(
-        videoURL: URL(string: "https://example.com/video.mp4")!,
-        duration: 60.0,
-        points: [
-            TelemetryDataPoint(
-                timestamp: 0,
-                latitude: -23.5505,
-                longitude: -46.6333,
-                altitude: 760,
-                speed: 15.0,
-                accelerationX: 0.1,
-                accelerationY: 0.2,
-                accelerationZ: 9.8,
-                gyroX: 0.05,
-                gyroY: 0.1,
-                gyroZ: 0.02,
-                temperature: 25.0
-            )
-        ],
-        startTime: Date(),
-        deviceName: "GoPro Hero 11"
-    )
-    
-    return ContentView()
-        .overlay(
-            TelemetryView(
-                session: mockSession,
-                exportService: ExportService()
-            )
-        )
 }

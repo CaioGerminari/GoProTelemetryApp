@@ -6,199 +6,170 @@
 //
 
 import SwiftUI
+import MapKit
 
 struct TelemetryView: View {
-    let session: TelemetrySession
-    let exportService: ExportService
+    // MARK: - Dependencies
     
-    @State private var selectedTab = 0
-    @State private var showingExportSheet = false
-    @State private var exportedFileURL: URL?
-    @State private var showingExportSuccess = false
+    @ObservedObject var viewModel: TelemetryViewModel
     
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            TelemetryHeaderView(session: session)
-                .padding(.horizontal, Theme.spacingLarge)
-                .padding(.top, Theme.spacingLarge)
-                .padding(.bottom, Theme.spacingMedium)
-            
-            // Tab Bar
-            TelemetryTabBar(selectedTab: $selectedTab)
-                .padding(.horizontal, Theme.spacingLarge)
-                .padding(.bottom, Theme.spacingMedium)
-            
-            // Content
-            Group {
-                switch selectedTab {
-                case 0:
-                    MapView(points: session.points)
-                case 1:
-                    ChartsView(session: session)
-                case 2:
-                    DataView(session: session)
-                default:
-                    MapView(points: session.points)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-            // Footer with Export Button
-            footerView
-                .padding(.horizontal, Theme.spacingLarge)
-                .padding(.vertical, Theme.spacingMedium)
-        }
-        .background(Theme.backgroundColor)
-        .sheet(isPresented: $showingExportSheet) {
-            ExportView(
-                session: session,
-                exportService: exportService
-            ) { exportedURL in
-                exportedFileURL = exportedURL
-                showingExportSuccess = true
-            }
-        }
-        .alert("Exportado com Sucesso", isPresented: $showingExportSuccess) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Arquivo exportado: \(exportedFileURL?.lastPathComponent ?? "Unknown")")
-        }
-    }
+    // MARK: - Computed Properties (Helpers)
     
-    // MARK: - Footer View
-    private var footerView: some View {
-        HStack {
-            Text("Pronto para exportar")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Theme.textSecondary)
-            
-            Spacer()
-            
-            PrimaryButton(
-                title: "Exportar Dados",
-                icon: "square.and.arrow.up"
-            ) {
-                showingExportSheet = true
-            }
-        }
-        .padding(Theme.spacingMedium)
-    }
-}
-
-// MARK: - Telemetry Header View (Renamed to avoid conflict)
-struct TelemetryHeaderView: View {
-    let session: TelemetrySession
+    private var session: TelemetrySession? { viewModel.session }
+    private var stats: TelemetryStatistics { session?.statistics ?? .empty }
+    private var dataPoints: [TelemetryData] { session?.dataPoints ?? [] }
+    
+    // MARK: - Body
     
     var body: some View {
-        HStack(alignment: .top, spacing: Theme.spacingLarge) {
-            VStack(alignment: .leading, spacing: Theme.spacingSmall) {
-                Text(session.deviceName)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
+        ScrollView {
+            VStack(spacing: Theme.Spacing.extraLarge) {
                 
-                Text("\(session.points.count) pontos • \(formatDuration(session.duration)) • \(session.statistics.totalDistance.formatted(precision: 1))m percorridos")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
-            }
-            
-            Spacer()
-            
-            TelemetryStatisticsGrid(stats: session.statistics)
-        }
-        .padding(Theme.spacingLarge)
-    }
-    
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.hour, .minute, .second]
-        formatter.unitsStyle = .abbreviated
-        return formatter.string(from: duration) ?? "0s"
-    }
-}
-
-// MARK: - Telemetry Statistics Grid (Renamed to avoid conflict)
-struct TelemetryStatisticsGrid: View {
-    let stats: TelemetryStatistics
-    
-    var body: some View {
-        HStack(spacing: Theme.spacingMedium) {
-            StatBadge(icon: "ruler", value: "\(stats.totalDistance.formatted(precision: 1))m", label: "Distância")
-            StatBadge(icon: "speedometer", value: "\(stats.maxSpeed.formatted(precision: 1))", label: "Vel. Máx")
-            StatBadge(icon: "mountain.2", value: "\(stats.maxAltitude.formatted(precision: 0))m", label: "Altitude")
-            StatBadge(icon: "timer", value: "\(stats.duration.formatted(precision: 0))s", label: "Duração")
-        }
-    }
-}
-
-// MARK: - Telemetry Tab Bar (Renamed to avoid conflict)
-struct TelemetryTabBar: View {
-    @Binding var selectedTab: Int
-    
-    let tabs = [
-        ("map", "Mapa"),
-        ("chart.xyaxis.line", "Gráficos"),
-        ("table", "Dados")
-    ]
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<tabs.count, id: \.self) { index in
-                TabButton(
-                    title: tabs[index].1,
-                    icon: tabs[index].0,
-                    isSelected: selectedTab == index
-                ) {
-                    selectedTab = index
+                // 1. Cabeçalho do Vídeo
+                if let url = session?.videoUrl {
+                    HStack(spacing: Theme.Spacing.medium) {
+                        // Ícone do Arquivo
+                        Image(systemName: "film.fill")
+                            .font(.system(size: 40))
+                            .foregroundStyle(LinearGradient(colors: [.blue, .cyan], startPoint: .top, endPoint: .bottom))
+                            .frame(width: 60, height: 60)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(12)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(url.lastPathComponent)
+                                .font(Theme.Font.title)
+                                .foregroundColor(Theme.primary)
+                            
+                            HStack {
+                                InfoBadge(text: url.formattedFileSize, color: .gray, icon: "externaldrive")
+                                InfoBadge(text: "\(dataPoints.count) pontos", color: .blue, icon: "chart.bar")
+                                if let date = session?.creationDate {
+                                    InfoBadge(text: date.shortDate, color: .secondary, icon: "calendar")
+                                }
+                            }
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.bottom, Theme.Spacing.small)
+                }
+                
+                // 2. Grid de Estatísticas (Cards)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: Theme.Spacing.medium)], spacing: Theme.Spacing.medium) {
+                    
+                    // Tempo Total
+                    StatCard(
+                        title: "Duração",
+                        value: stats.duration.formattedTime,
+                        icon: "clock.fill",
+                        color: .blue
+                    )
+                    
+                    // Distância
+                    StatCard(
+                        title: "Distância Total",
+                        value: stats.totalDistance.asDistanceString,
+                        icon: "map.fill",
+                        color: .green
+                    )
+                    
+                    // Velocidade Máxima
+                    StatCard(
+                        title: "Velocidade Máx",
+                        value: stats.maxSpeed.asKmhString,
+                        icon: "speedometer",
+                        color: .orange
+                    )
+                    
+                    // Altitude Máxima
+                    StatCard(
+                        title: "Altitude Máx",
+                        value: stats.maxAltitude.asDistanceString,
+                        icon: "mountain.2.fill",
+                        color: .purple
+                    )
+                    
+                    // Média de Velocidade
+                    StatCard(
+                        title: "Velocidade Média",
+                        value: stats.avgSpeed.asKmhString,
+                        icon: "gauge.medium",
+                        color: .teal
+                    )
+                    
+                    // Força G Máxima (se houver)
+                    if stats.maxGForce > 0 {
+                        StatCard(
+                            title: "Força G Máx",
+                            value: String(format: "%.1f G", stats.maxGForce),
+                            icon: "waveform.path.ecg",
+                            color: .red
+                        )
+                    }
+                }
+                
+                // 3. Visão Geral do Mapa
+                if !dataPoints.isEmpty {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.small) {
+                        SectionHeader("Trajeto Percorrido", icon: "map")
+                        
+                        // Reutiliza o MapView mas com altura fixa e sem controles complexos
+                        MapView(telemetryData: dataPoints)
+                            .frame(height: 350)
+                            .cornerRadius(Theme.cornerRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.cornerRadius)
+                                    .stroke(Theme.secondary.opacity(0.2), lineWidth: 1)
+                            )
+                            .shadow(color: Theme.shadowColor, radius: 4, x: 0, y: 2)
+                    }
+                } else {
+                    // Estado Vazio (Sem GPS)
+                    EmptyStateView(
+                        title: "Sem GPS",
+                        systemImage: "location.slash",
+                        description: "Não foi possível traçar o mapa para este vídeo."
+                    )
+                    .frame(height: 200)
+                    .cardStyle()
                 }
             }
+            .padding(Theme.padding)
         }
-        .padding(4)
-        .background(Color.black.opacity(0.05))
-        .cornerRadius(12)
+        .background(Theme.background)
     }
 }
 
 // MARK: - Preview
+
 #Preview {
-    TelemetryView(
-        session: TelemetrySession(
-            videoURL: URL(string: "https://example.com/video.mp4")!,
-            duration: 60.0,
-            points: [
-                TelemetryDataPoint(
-                    timestamp: 0,
-                    latitude: -23.5505,
-                    longitude: -46.6333,
-                    altitude: 760,
-                    speed: 15.0,
-                    accelerationX: 0.1,
-                    accelerationY: 0.2,
-                    accelerationZ: 9.8,
-                    gyroX: 0.05,
-                    gyroY: 0.1,
-                    gyroZ: 0.02,
-                    temperature: 25.0
-                ),
-                TelemetryDataPoint(
-                    timestamp: 1,
-                    latitude: -23.5506,
-                    longitude: -46.6334,
-                    altitude: 765,
-                    speed: 18.0,
-                    accelerationX: 0.2,
-                    accelerationY: 0.1,
-                    accelerationZ: 9.7,
-                    gyroX: 0.06,
-                    gyroY: 0.09,
-                    gyroZ: 0.03,
-                    temperature: 26.0
-                )
-            ],
-            startTime: Date(),
-            deviceName: "GoPro Hero 11"
-        ),
-        exportService: ExportService()
+    // Mock Data para Preview
+    let points = [
+        TelemetryData(timestamp: 0, latitude: -25.42, longitude: -49.27, altitude: 900, speed2D: 10, speed3D: 10, acceleration: Vector3(x: 0, y: 0, z: 1), gyro: nil),
+        TelemetryData(timestamp: 10, latitude: -25.43, longitude: -49.28, altitude: 910, speed2D: 15, speed3D: 15, acceleration: Vector3(x: 0, y: 0, z: 1), gyro: nil)
+    ]
+    
+    let stats = TelemetryStatistics(
+        duration: 120.5,
+        totalDistance: 1540,
+        maxSpeed: 22.5, // ~81 km/h
+        avgSpeed: 12.0,
+        maxAltitude: 950,
+        minAltitude: 900,
+        maxGForce: 1.2
     )
-    .frame(width: 1000, height: 700)
+    
+    let session = TelemetrySession(
+        videoUrl: URL(fileURLWithPath: "/Videos/GoPro/GX0100.MP4"),
+        creationDate: Date(),
+        dataPoints: points,
+        statistics: stats
+    )
+    
+    let vm = TelemetryViewModel()
+    vm.session = session
+    
+    return TelemetryView(viewModel: vm)
+        .frame(width: 900, height: 700)
 }

@@ -6,80 +6,120 @@
 //
 
 import Foundation
-import CoreLocation
 
-// GPMF FourCC keys
 struct GPMFKeys {
-    static let DEVICE: UInt32 = 0x44455643 // 'DEVC'
-    static let GPS5: UInt32 = 0x47505335   // 'GPS5'
-    static let ACCL: UInt32 = 0x4143434C   // 'ACCL'
-    static let GYRO: UInt32 = 0x4759524F   // 'GYRO'
-    static let TEMP: UInt32 = 0x54454D50   // 'TEMP'
-    static let SCAL: UInt32 = 0x5343414C   // 'SCAL'
-    static let STMP: UInt32 = 0x53544D50   // 'STMP'
-    static let STRM: UInt32 = 0x5354524D   // 'STRM'
-    static let DVID: UInt32 = 0x44564944   // 'DVID'
-    static let DVNM: UInt32 = 0x44564E4D   // 'DVNM'
-}
-
-struct TelemetryCalculator {
-    static func totalDistance(points: [TelemetryDataPoint]) -> Double {
-        var total: Double = 0
-        let gpsPoints = points.compactMap { $0.coordinate }
+    
+    // MARK: - Estrutura GPMF (Container)
+    
+    struct Structure {
+        /// Device Container (Início da árvore de dispositivos)
+        static let device = "DEVC"
         
-        for i in 1..<gpsPoints.count {
-            let prev = gpsPoints[i-1]
-            let curr = gpsPoints[i]
-            total += calculateDistance(coord1: prev, coord2: curr)
-        }
+        /// Device ID (Identificador único do dispositivo)
+        static let deviceId = "DVID"
         
-        return total
+        /// Device Name (Nome legível, ex: "GoPro Hero 10")
+        static let deviceName = "DVNM"
+        
+        /// Stream Container (Contém os dados de um sensor específico)
+        static let stream = "STRM"
+        
+        /// Stream Name (Nome do sensor, ex: "Accelerometer")
+        static let streamName = "STNM"
+        
+        /// Scale Factor (Divisor para descompactar os dados brutos)
+        /// Ex: Valor 12345 com SCAL 100 vira 123.45
+        static let scale = "SCAL"
+        
+        /// Standard Units (Unidades SI, ex: "m/s²", "rad/s")
+        static let units = "SIUN"
+        
+        /// Type definition (Define o tipo de dado, ex: 'f' para float, 'L' para long)
+        static let type = "TYPE"
+        
+        /// Total Samples (Contagem total de amostras)
+        static let totalSamples = "TSMP"
     }
     
-    private static func calculateDistance(coord1: CLLocationCoordinate2D, coord2: CLLocationCoordinate2D) -> Double {
-        let earthRadius: Double = 6371000 // meters
+    // MARK: - Sensores Principais (Telemetria)
+    
+    struct Sensors {
+        // --- GPS ---
+        /// GPS Versão 5 (Hero 5 a 10)
+        /// Dados: Lat, Lon, Alt, Speed2D, Speed3D
+        static let gps5 = "GPS5"
         
-        let dLat = (coord2.latitude - coord1.latitude) * .pi / 180.0
-        let dLon = (coord2.longitude - coord1.longitude) * .pi / 180.0
+        /// GPS Versão 9 (Hero 11+)
+        /// Dados: Lat, Lon, Alt, Speed2D, Speed3D, Days, Secs, DOP, Fix
+        static let gps9 = "GPS9"
         
-        let a = sin(dLat/2) * sin(dLat/2) +
-               cos(coord1.latitude * .pi / 180.0) * cos(coord2.latitude * .pi / 180.0) *
-               sin(dLon/2) * sin(dLon/2)
+        /// GPS UTC Time (Tempo universal)
+        static let gpsTime = "GPSU"
         
-        let c = 2 * atan2(sqrt(a), sqrt(1-a))
+        /// GPS Precision (Dilution of Precision)
+        static let gpsPrecision = "GPSP"
         
-        return earthRadius * c
+        // --- IMU (Inertial Measurement Unit) ---
+        /// Acelerômetro (Força G nos eixos X, Y, Z)
+        static let accelerometer = "ACCL"
+        
+        /// Giroscópio (Rotação em rad/s nos eixos X, Y, Z)
+        static let gyroscope = "GYRO"
+        
+        /// Vetor de Gravidade (Direção da gravidade isolada)
+        static let gravity = "GRAV"
+        
+        /// Magnetômetro (Bússola) - Raro em câmeras recentes
+        static let magnetometer = "MAGN"
     }
     
-    static func calculateSpeedStatistics(points: [TelemetryDataPoint]) -> (min: Double, max: Double, average: Double) {
-        let speeds = points.compactMap { $0.speed }
-        guard !speeds.isEmpty else { return (0, 0, 0) }
+    // MARK: - Orientação e Ambiente
+    
+    struct Environment {
+        /// Temperatura da Câmera (em Celsius)
+        static let temperature = "TMPC"
         
-        let minSpeed = speeds.min() ?? 0
-        let maxSpeed = speeds.max() ?? 0
-        let averageSpeed = speeds.reduce(0, +) / Double(speeds.count)
+        /// Camera Orientation (Orientação física da câmera em quaterniões)
+        static let cameraOrientation = "CORI"
         
-        return (minSpeed, maxSpeed, averageSpeed)
+        /// Image Orientation (Orientação digital da imagem, ex: rotação)
+        static let imageOrientation = "IORI"
     }
     
-    static func calculateAccelerationMagnitude(x: Double?, y: Double?, z: Double?) -> Double? {
-        guard let x = x, let y = y, let z = z else { return nil }
-        return sqrt(x*x + y*y + z*z)
+    // MARK: - Configurações da Câmera (Metadata)
+    
+    struct Camera {
+        /// Velocidade do Obturador (Exposure Time)
+        static let shutterSpeed = "SHUT"
+        
+        /// Sensibilidade ISO
+        static let iso = "ISO" // ou ISOG em modelos mais novos
+        
+        /// Balanço de Branco (Kelvin)
+        static let whiteBalance = "WBAL"
+        
+        /// Ganhos RGB do Balanço de Branco
+        static let whiteBalanceRGB = "WRGB"
+        
+        /// Histograma (Luma)
+        static let luma = "YAVG"
+        
+        /// Face Detection (Coordenadas de rostos detectados)
+        static let face = "FACE"
     }
     
-    static func filterPointsByTimeInterval(_ points: [TelemetryDataPoint], interval: TimeInterval) -> [TelemetryDataPoint] {
-        guard let firstPoint = points.first else { return [] }
-        
-        var filteredPoints: [TelemetryDataPoint] = [firstPoint]
-        var lastTime = firstPoint.timestamp
-        
-        for point in points.dropFirst() {
-            if point.timestamp - lastTime >= interval {
-                filteredPoints.append(point)
-                lastTime = point.timestamp
-            }
-        }
-        
-        return filteredPoints
+    // MARK: - Helpers
+    
+    /// Verifica se uma chave corresponde a algum stream de GPS conhecido
+    static func isGPS(_ key: String) -> Bool {
+        return key == Sensors.gps5 || key == Sensors.gps9
+    }
+    
+    /// Verifica se uma chave corresponde a dados de orientação (IMU/Rotação)
+    static func isOrientation(_ key: String) -> Bool {
+        return key == Environment.cameraOrientation ||
+               key == Environment.imageOrientation ||
+               key == Sensors.accelerometer ||
+               key == Sensors.gyroscope
     }
 }

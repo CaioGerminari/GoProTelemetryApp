@@ -7,8 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		C80ED3B22EDC8168004A9AA1 /* GoProTelemetryApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoProTelemetryApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C80ED3D02EDC8222004A9AA1 /* GoProTelemetryApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "GoProTelemetryApp-Bridging-Header.h"; sourceTree = "<group>"; };
+		C83DCE172EDE538100724BE7 /* GoProTelemetryApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoProTelemetryApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -26,7 +25,7 @@
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = C80ED3B02EDC8168004A9AA1 /* Resources */;
 			membershipExceptions = (
-				Services/GPMFBridge.h,
+				Bridge/GPMFBridge.h,
 			);
 		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
@@ -64,17 +63,8 @@
 			children = (
 				C80ED3C62EDC81CE004A9AA1 /* gpmf-parser */,
 				C80ED3B42EDC8168004A9AA1 /* GoProTelemetryApp */,
-				C80ED3B32EDC8168004A9AA1 /* Products */,
-				C80ED3D02EDC8222004A9AA1 /* GoProTelemetryApp-Bridging-Header.h */,
+				C83DCE172EDE538100724BE7 /* GoProTelemetryApp.app */,
 			);
-			sourceTree = "<group>";
-		};
-		C80ED3B32EDC8168004A9AA1 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				C80ED3B22EDC8168004A9AA1 /* GoProTelemetryApp.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -100,7 +90,7 @@
 			packageProductDependencies = (
 			);
 			productName = GoProTelemetryApp;
-			productReference = C80ED3B22EDC8168004A9AA1 /* GoProTelemetryApp.app */;
+			productReference = C83DCE172EDE538100724BE7 /* GoProTelemetryApp.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -129,7 +119,7 @@
 			mainGroup = C80ED3A92EDC8168004A9AA1;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = C80ED3B32EDC8168004A9AA1 /* Products */;
+			productRefGroup = C80ED3A92EDC8168004A9AA1;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -308,7 +298,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "GoProTelemetryApp-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "GoProTelemetryApp/Bridge/GoProTelemetryApp-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -344,7 +334,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "GoProTelemetryApp-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "GoProTelemetryApp/Bridge/GoProTelemetryApp-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};

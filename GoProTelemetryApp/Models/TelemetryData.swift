@@ -8,141 +8,99 @@
 import Foundation
 import CoreLocation
 
-struct TelemetryDataPoint: Identifiable, Codable {
-    let id: UUID
+// MARK: - Main Data Point
+/// Representa um único "frame" de dados de telemetria sincronizados.
+/// Usado em Listas, Gráficos e Mapas.
+struct TelemetryData: Identifiable, Hashable {
+    let id = UUID()
+    
+    /// Tempo relativo ao início do vídeo (em segundos)
     let timestamp: Double
-    let latitude: Double?
-    let longitude: Double?
-    let altitude: Double?
-    let speed: Double?
-    let accelerationX: Double?
-    let accelerationY: Double?
-    let accelerationZ: Double?
-    let gyroX: Double?
-    let gyroY: Double?
-    let gyroZ: Double?
-    let temperature: Double?
     
-    init(id: UUID = UUID(),
-         timestamp: Double,
-         latitude: Double? = nil,
-         longitude: Double? = nil,
-         altitude: Double? = nil,
-         speed: Double? = nil,
-         accelerationX: Double? = nil,
-         accelerationY: Double? = nil,
-         accelerationZ: Double? = nil,
-         gyroX: Double? = nil,
-         gyroY: Double? = nil,
-         gyroZ: Double? = nil,
-         temperature: Double? = nil) {
-        self.id = id
-        self.timestamp = timestamp
-        self.latitude = latitude
-        self.longitude = longitude
-        self.altitude = altitude
-        self.speed = speed
-        self.accelerationX = accelerationX
-        self.accelerationY = accelerationY
-        self.accelerationZ = accelerationZ
-        self.gyroX = gyroX
-        self.gyroY = gyroY
-        self.gyroZ = gyroZ
-        self.temperature = temperature
+    // MARK: - GPS Data
+    let latitude: Double
+    let longitude: Double
+    let altitude: Double
+    let speed2D: Double // Velocidade horizontal (m/s)
+    let speed3D: Double // Velocidade tridimensional (m/s)
+    
+    // MARK: - Sensors (Opcionais)
+    var acceleration: Vector3? // Acelerômetro (m/s²)
+    var gyro: Vector3?        // Giroscópio (rad/s)
+    
+    // MARK: - Computed Properties (Helpers para UI)
+    
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
     
-    var coordinate: CLLocationCoordinate2D? {
-        guard let lat = latitude, let lon = longitude else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    /// Distância acumulada até este ponto (preenchido pelo Mapper)
+    var distanceAccumulated: Double = 0.0
+    
+    // Formatadores estáticos para performance em Listas
+    private static let timeFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.allowedUnits = [.minute, .second]
+        f.zeroFormattingBehavior = .pad
+        return f
+    }()
+    
+    var formattedTime: String {
+        return TelemetryData.timeFormatter.string(from: timestamp) ?? String(format: "%.1fs", timestamp)
+    }
+    
+    var formattedSpeed: String {
+        return String(format: "%.1f km/h", speed2D * 3.6)
+    }
+    
+    var formattedAltitude: String {
+        return String(format: "%.0f m", altitude)
     }
 }
 
-struct TelemetrySession: Identifiable, Codable {
-    let id: UUID
-    let videoURL: URL
+// MARK: - Helper Structures
+
+/// Estrutura auxiliar para dados vetoriais (IMU)
+struct Vector3: Hashable, Codable {
+    let x: Double
+    let y: Double
+    let z: Double
+    
+    /// Magnitude do vetor (útil para força G total)
+    var magnitude: Double {
+        sqrt(x*x + y*y + z*z)
+    }
+}
+
+// MARK: - Session & Statistics
+
+/// Representa a sessão completa de um vídeo processado
+struct TelemetrySession: Identifiable {
+    let id = UUID()
+    let videoUrl: URL
+    let creationDate: Date
+    let dataPoints: [TelemetryData]
+    let statistics: TelemetryStatistics
+}
+
+/// Estatísticas sumarizadas (Calculadas pelo Mapper, apenas armazenadas aqui)
+struct TelemetryStatistics {
     let duration: TimeInterval
-    let points: [TelemetryDataPoint]
-    let startTime: Date
-    let deviceName: String
+    let totalDistance: Double // Metros
+    let maxSpeed: Double      // m/s
+    let avgSpeed: Double      // m/s
+    let maxAltitude: Double   // Metros
+    let minAltitude: Double   // Metros
+    let maxGForce: Double     // G
     
-    init(id: UUID = UUID(),
-         videoURL: URL,
-         duration: TimeInterval,
-         points: [TelemetryDataPoint],
-         startTime: Date,
-         deviceName: String) {
-        self.id = id
-        self.videoURL = videoURL
-        self.duration = duration
-        self.points = points
-        self.startTime = startTime
-        self.deviceName = deviceName
-    }
-    
-    var hasGPS: Bool {
-        points.contains { $0.latitude != nil && $0.longitude != nil }
-    }
-    
-    var hasIMU: Bool {
-        points.contains { $0.accelerationX != nil }
-    }
-    
-    var statistics: TelemetryStatistics {
-        TelemetryStatistics(session: self)
-    }
-}
-
-struct TelemetryStatistics: Codable {
-    let totalDistance: Double
-    let maxSpeed: Double
-    let avgSpeed: Double
-    let maxAltitude: Double
-    let minAltitude: Double
-    let maxAcceleration: Double
-    let duration: TimeInterval
-    
-    init(session: TelemetrySession) {
-        let speeds = session.points.compactMap { $0.speed }
-        let altitudes = session.points.compactMap { $0.altitude }
-        let accelerations = session.points.compactMap { point -> Double? in
-            guard let x = point.accelerationX,
-                  let y = point.accelerationY,
-                  let z = point.accelerationZ else {
-                return nil
-            }
-            return sqrt(x*x + y*y + z*z)
-        }
-        
-        self.maxSpeed = speeds.max() ?? 0
-        self.avgSpeed = speeds.isEmpty ? 0 : speeds.reduce(0, +) / Double(speeds.count)
-        self.maxAltitude = altitudes.max() ?? 0
-        self.minAltitude = altitudes.min() ?? 0
-        self.maxAcceleration = accelerations.max() ?? 0
-        self.duration = session.duration
-        
-        // Calculate total distance
-        self.totalDistance = TelemetryCalculator.totalDistance(points: session.points)
-    }
-}
-
-// Extension para codificar/decodificar URL
-extension URL: Codable {
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let urlString = try container.decode(String.self)
-        
-        guard let url = URL(string: urlString) else {
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Invalid URL string: \(urlString)"
-            )
-        }
-        
-        self = url
-    }
-    
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(self.absoluteString)
-    }
+    // Placeholder para sessão vazia
+    static let empty = TelemetryStatistics(
+        duration: 0,
+        totalDistance: 0,
+        maxSpeed: 0,
+        avgSpeed: 0,
+        maxAltitude: 0,
+        minAltitude: 0,
+        maxGForce: 0
+    )
 }

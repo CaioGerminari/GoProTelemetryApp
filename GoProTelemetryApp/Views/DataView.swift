@@ -8,334 +8,215 @@
 import SwiftUI
 
 struct DataView: View {
-    let session: TelemetrySession
+    // MARK: - Properties
+    
+    let data: [TelemetryData]
     
     @State private var searchText = ""
-    @State private var selectedDataTypes: Set<TelemetryType> = [.gps, .accelerometer, .gyroscope, .temperature]
-    @State private var sortOrder: SortOrder = .timestamp
-    @State private var isAscending = true
+    @State private var limit: Int = 100 // Começa leve para abrir instantâneo
+    @State private var step: Int = 500  // Carrega em blocos maiores
     
-    enum SortOrder: String, CaseIterable {
-        case timestamp = "Tempo"
-        case speed = "Velocidade"
-        case altitude = "Altitude"
-        case temperature = "Temperatura"
-    }
+    // MARK: - Computed Logic
     
-    var filteredPoints: [TelemetryDataPoint] {
-        let filtered = session.points.filter { point in
-            if !searchText.isEmpty {
-                let searchLower = searchText.lowercased()
-                return String(format: "%.2f", point.timestamp).contains(searchText) ||
-                       String(format: "%.6f", point.latitude ?? 0).contains(searchText) ||
-                       String(format: "%.6f", point.longitude ?? 0).contains(searchText) ||
-                       String(format: "%.1f", point.speed ?? 0).contains(searchText)
-            }
-            return true
+    /// Filtra e limita os dados para exibição segura
+    var filteredData: [TelemetryData] {
+        let source = searchText.isEmpty ? data : data.filter { point in
+            // Busca rápida por tempo ou velocidade
+            point.formattedTime.contains(searchText) ||
+            String(format: "%.0f", point.speed2D * 3.6).contains(searchText)
         }
         
-        return filtered.sorted { first, second in
-            switch sortOrder {
-            case .timestamp:
-                return isAscending ? first.timestamp < second.timestamp : first.timestamp > second.timestamp
-            case .speed:
-                return isAscending ? (first.speed ?? 0) < (second.speed ?? 0) : (first.speed ?? 0) > (second.speed ?? 0)
-            case .altitude:
-                return isAscending ? (first.altitude ?? 0) < (second.altitude ?? 0) : (first.altitude ?? 0) > (second.altitude ?? 0)
-            case .temperature:
-                return isAscending ? (first.temperature ?? 0) < (second.temperature ?? 0) : (first.temperature ?? 0) > (second.temperature ?? 0)
-            }
-        }
+        // Retorna apenas o slice até o limite atual
+        return Array(source.prefix(limit))
     }
+    
+    var totalCount: Int {
+        searchText.isEmpty ? data.count : filteredData.count
+    }
+    
+    // MARK: - Body
     
     var body: some View {
-        VStack(spacing: Theme.spacingMedium) {
-            // Controls
-            controlsSection
+        VStack(spacing: 0) {
+            // 1. Barra de Ferramentas (Busca e Contagem)
+            headerView
             
-            // Data Type Filter
-            dataTypeFilterSection
+            // 2. Cabeçalho da Tabela
+            tableHeader
             
-            // Data Table
-            dataTableSection
-            
-            // Footer Info
-            footerInfoSection
+            // 3. Lista de Dados
+            if data.isEmpty {
+                EmptyStateView(
+                    title: "Sem Dados",
+                    systemImage: "list.bullet.rectangle.portrait",
+                    description: "Nenhum ponto de telemetria encontrado neste vídeo."
+                )
+            } else {
+                dataList
+            }
         }
-        .modernCard()
-        .padding(Theme.spacingLarge)
+        .background(Theme.background)
     }
     
-    // MARK: - Controls Section
-    private var controlsSection: some View {
+    // MARK: - Subviews
+    
+    private var headerView: some View {
         HStack {
-            // Search
+            // Campo de Busca
             HStack {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(Theme.textSecondary)
+                    .foregroundColor(Theme.secondary)
                 
-                TextField("Buscar...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(Theme.textSecondary)
+                TextField("Buscar tempo (ex: 12.5) ou velocidade...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .onChange(of: searchText) { _ in
+                        limit = 100 // Reseta paginação ao buscar
                     }
-                    .buttonStyle(.plain)
-                }
             }
             .padding(8)
-            .background(Color.black.opacity(0.05))
+            .background(Theme.surface)
             .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Theme.secondary.opacity(0.2), lineWidth: 1)
+            )
+            .frame(maxWidth: 400)
             
             Spacer()
             
-            // Sort
-            HStack {
-                Text("Ordenar por:")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
-                
-                Picker("", selection: $sortOrder) {
-                    ForEach(SortOrder.allCases, id: \.self) { order in
-                        Text(order.rawValue).tag(order)
-                    }
-                }
-                .pickerStyle(.menu)
-                
-                Button(action: { isAscending.toggle() }) {
-                    Image(systemName: isAscending ? "arrow.up" : "arrow.down")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-            }
+            // Contador
+            Text("\(filteredData.count) de \(data.count) pontos")
+                .font(Theme.Font.label)
+                .foregroundColor(Theme.secondary)
         }
-        .padding(.horizontal, Theme.spacingLarge)
-        .padding(.top, Theme.spacingLarge)
+        .padding(Theme.padding)
+        .background(Theme.surfaceSecondary)
     }
     
-    // MARK: - Data Type Filter Section
-    private var dataTypeFilterSection: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.spacingSmall) {
-                ForEach(TelemetryType.allCases, id: \.self) { type in
-                    DataTypeFilterButton(
-                        type: type,
-                        isSelected: selectedDataTypes.contains(type)
-                    ) {
-                        if selectedDataTypes.contains(type) {
-                            selectedDataTypes.remove(type)
-                        } else {
-                            selectedDataTypes.insert(type)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, Theme.spacingLarge)
+    private var tableHeader: some View {
+        HStack(spacing: Theme.Spacing.small) {
+            Text("Tempo")
+                .frame(width: 80, alignment: .leading)
+            
+            Text("Coordenadas (Lat, Lon)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Text("Alt")
+                .frame(width: 70, alignment: .trailing)
+            
+            Text("Vel (2D)")
+                .frame(width: 80, alignment: .trailing)
+            
+            Text("G-Force")
+                .frame(width: 70, alignment: .trailing)
         }
+        .font(Theme.Font.label)
+        .foregroundColor(Theme.secondary)
+        .padding(.horizontal, Theme.padding)
+        .padding(.vertical, 8)
+        .background(Theme.background)
+        .overlay(Rectangle().frame(height: 1).foregroundColor(Theme.secondary.opacity(0.1)), alignment: .bottom)
     }
     
-    // MARK: - Data Table Section
-    private var dataTableSection: some View {
+    private var dataList: some View {
         ScrollView {
-            LazyVStack(spacing: 1) {
-                // Header
-                HStack {
-                    Text("Tempo")
-                        .frame(width: 80, alignment: .leading)
+            LazyVStack(spacing: 0) {
+                // Linhas de Dados
+                ForEach(filteredData) { point in
+                    DataRow(point: point)
+                        .padding(.horizontal, Theme.padding)
+                        .padding(.vertical, 6)
+                        .background(
+                            // Alternância de cor zebrada (opcional, mas ajuda a leitura)
+                            point.id.hashValue % 2 == 0 ? Theme.surface.opacity(0.3) : Color.clear
+                        )
                     
-                    Text("Posição")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    Text("Altitude")
-                        .frame(width: 80, alignment: .trailing)
-                    
-                    Text("Velocidade")
-                        .frame(width: 80, alignment: .trailing)
-                    
-                    Text("Aceleração")
-                        .frame(width: 100, alignment: .trailing)
-                    
-                    Text("Giroscópio")
-                        .frame(width: 100, alignment: .trailing)
-                    
-                    Text("Temp")
-                        .frame(width: 60, alignment: .trailing)
+                    Divider().opacity(0.3)
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Theme.textSecondary)
-                .padding(.horizontal, Theme.spacingMedium)
-                .padding(.vertical, 12)
-                .background(Color.black.opacity(0.03))
                 
-                // Rows
-                ForEach(Array(filteredPoints.prefix(200).enumerated()), id: \.offset) { index, point in
-                    DataRowView(point: point, index: index)
-                        .padding(.horizontal, Theme.spacingMedium)
-                        .padding(.vertical, 8)
-                        .background(index % 2 == 0 ? Color.clear : Color.black.opacity(0.02))
+                // Botão "Carregar Mais"
+                if limit < (searchText.isEmpty ? data.count : Int.max) {
+                    loadMoreButton
                 }
             }
+            .padding(.bottom, Theme.padding)
         }
-        .background(Theme.cardBackground)
-        .cornerRadius(12)
-        .padding(.horizontal, Theme.spacingLarge)
-        .padding(.bottom, Theme.spacingLarge)
     }
     
-    // MARK: - Footer Info Section
-    private var footerInfoSection: some View {
-        HStack {
-            Text("Mostrando \(min(200, filteredPoints.count)) de \(session.points.count) pontos")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Theme.textSecondary)
-            
-            Spacer()
-            
-            Text("Use ⌘F para buscar")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(Theme.textSecondary.opacity(0.7))
+    private var loadMoreButton: some View {
+        Button(action: {
+            limit += step
+        }) {
+            HStack {
+                Image(systemName: "arrow.down.circle")
+                Text("Carregar mais \(step) pontos")
+            }
+            .font(Theme.Font.label)
+            .padding()
+            .frame(maxWidth: .infinity)
+            .foregroundColor(Theme.primary)
         }
-        .padding(.horizontal, Theme.spacingLarge)
-        .padding(.bottom, Theme.spacingLarge)
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - Data Row View
-struct DataRowView: View {
-    let point: TelemetryDataPoint
-    let index: Int
-    
-    @State private var isHovered = false
+// MARK: - Row Component
+
+struct DataRow: View {
+    let point: TelemetryData
     
     var body: some View {
-        HStack {
-            // Time
-            Text(formatTime(point.timestamp))
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+        HStack(spacing: Theme.Spacing.small) {
+            // Tempo
+            Text(point.formattedTime)
+                .font(Theme.Font.mono)
+                .foregroundColor(Theme.primary)
                 .frame(width: 80, alignment: .leading)
-                .foregroundColor(Theme.textPrimary)
             
-            // Position
-            if let lat = point.latitude, let lon = point.longitude {
-                Text("\(String(format: "%.4f", lat)), \(String(format: "%.4f", lon))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundColor(Theme.textSecondary)
-            } else {
-                Text("—")
-                    .font(.system(size: 11))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundColor(Theme.textSecondary.opacity(0.5))
-            }
+            // Lat/Lon
+            Text(String(format: "%.5f, %.5f", point.latitude, point.longitude))
+                .font(Theme.Font.mono)
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
             
             // Altitude
-            Text(point.altitude != nil ? "\(Int(point.altitude!))m" : "—")
-                .font(.system(size: 11, design: .monospaced))
+            Text(point.formattedAltitude)
+                .font(Theme.Font.mono)
+                .foregroundColor(.secondary)
+                .frame(width: 70, alignment: .trailing)
+            
+            // Velocidade
+            Text(point.formattedSpeed)
+                .font(Theme.Font.mono)
+                .fontWeight(.medium)
+                .foregroundColor(Theme.Data.color(for: .gps))
                 .frame(width: 80, alignment: .trailing)
-                .foregroundColor(Theme.textSecondary)
             
-            // Speed
-            Text(point.speed != nil ? "\(Int(point.speed!))" : "—")
-                .font(.system(size: 11, design: .monospaced))
-                .frame(width: 80, alignment: .trailing)
-                .foregroundColor(Theme.textSecondary)
-            
-            // Acceleration
-            if let accel = TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.accelerationX,
-                y: point.accelerationY,
-                z: point.accelerationZ
-            ) {
-                Text("\(accel.formatted(precision: 1))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(width: 100, alignment: .trailing)
-                    .foregroundColor(Theme.textSecondary)
+            // Aceleração (Magnitude)
+            if let acc = point.acceleration {
+                Text(String(format: "%.1f G", acc.magnitude))
+                    .font(Theme.Font.mono)
+                    .foregroundColor(acc.magnitude > 1.5 ? Theme.warning : Theme.secondary)
+                    .frame(width: 70, alignment: .trailing)
             } else {
-                Text("—")
-                    .font(.system(size: 11))
-                    .frame(width: 100, alignment: .trailing)
-                    .foregroundColor(Theme.textSecondary.opacity(0.5))
+                Text("-")
+                    .font(Theme.Font.mono)
+                    .foregroundColor(Theme.secondary.opacity(0.3))
+                    .frame(width: 70, alignment: .trailing)
             }
-            
-            // Gyro
-            if let gyro = TelemetryCalculator.calculateAccelerationMagnitude(
-                x: point.gyroX,
-                y: point.gyroY,
-                z: point.gyroZ
-            ) {
-                Text("\(gyro.formatted(precision: 2))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(width: 100, alignment: .trailing)
-                    .foregroundColor(Theme.textSecondary)
-            } else {
-                Text("—")
-                    .font(.system(size: 11))
-                    .frame(width: 100, alignment: .trailing)
-                    .foregroundColor(Theme.textSecondary.opacity(0.5))
-            }
-            
-            // Temperature
-            Text(point.temperature != nil ? "\(Int(point.temperature!))°" : "—")
-                .font(.system(size: 11, design: .monospaced))
-                .frame(width: 60, alignment: .trailing)
-                .foregroundColor(Theme.textSecondary)
         }
-        .padding(.vertical, 4)
-        .background(isHovered ? Color.blue.opacity(0.1) : Color.clear)
-        .cornerRadius(6)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-    
-    private func formatTime(_ timestamp: Double) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.minute, .second]
-        formatter.unitsStyle = .positional
-        formatter.zeroFormattingBehavior = .pad
-        return formatter.string(from: timestamp) ?? "0:00"
+        .font(.system(size: 13)) // Tamanho base para densidade de dados
     }
 }
 
 // MARK: - Preview
+
 #Preview {
-    DataView(session: TelemetrySession(
-        videoURL: URL(string: "https://example.com/video.mp4")!,
-        duration: 60.0,
-        points: [
-            TelemetryDataPoint(
-                timestamp: 0,
-                latitude: -23.5505,
-                longitude: -46.6333,
-                altitude: 760,
-                speed: 15.0,
-                accelerationX: 0.1,
-                accelerationY: 0.2,
-                accelerationZ: 9.8,
-                gyroX: 0.05,
-                gyroY: 0.1,
-                gyroZ: 0.02,
-                temperature: 25.0
-            ),
-            TelemetryDataPoint(
-                timestamp: 1,
-                latitude: -23.5506,
-                longitude: -46.6334,
-                altitude: 765,
-                speed: 18.0,
-                accelerationX: 0.2,
-                accelerationY: 0.1,
-                accelerationZ: 9.7,
-                gyroX: 0.06,
-                gyroY: 0.09,
-                gyroZ: 0.03,
-                temperature: 26.0
-            )
-        ],
-        startTime: Date(),
-        deviceName: "GoPro Hero 11"
-    ))
-    .frame(width: 800, height: 600)
+    DataView(data: [
+        TelemetryData(timestamp: 0.0, latitude: -25.4284, longitude: -49.2733, altitude: 930, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(timestamp: 1.0, latitude: -25.4285, longitude: -49.2734, altitude: 931, speed2D: 5.5, speed3D: 5.6, acceleration: Vector3(x: 0, y: 0, z: 1.2), gyro: nil),
+        TelemetryData(timestamp: 2.0, latitude: -25.4286, longitude: -49.2735, altitude: 932, speed2D: 12.0, speed3D: 12.1, acceleration: Vector3(x: 0.5, y: 0.2, z: 0.9), gyro: nil)
+    ])
+    .frame(width: 800, height: 500)
 }

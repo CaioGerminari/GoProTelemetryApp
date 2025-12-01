@@ -1,6 +1,6 @@
 //
 //  GPMFBridge.c
-//  CORREÇÃO CRÍTICA: Uso de GPMF_ScaledData para aplicar escalas (SCAL)
+//  Implementação da extração e processamento GPMF
 //
 
 #include "GPMFBridge.h"
@@ -11,28 +11,14 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
-#include <errno.h>
 
-// DEBUG MACROS
-#ifdef DEBUG
-#define LOG_DEBUG(fmt, ...) printf("[DEBUG] " fmt "\n", ##__VA_ARGS__)
-#define LOG_ERROR(fmt, ...) printf("[ERROR] " fmt "\n", ##__VA_ARGS__)
-#else
-#define LOG_DEBUG(fmt, ...)
-#define LOG_ERROR(fmt, ...)
-#endif
+// MARK: - HELPERS
 
-// ------------------------
-// Check if video has telemetry
-// ------------------------
-int has_gpmf_stream(const char* file_path)
-{
+// Verifica se o arquivo tem telemetria
+int has_gpmf_stream(const char* file_path) {
     if (!file_path) return 0;
 
-    FILE* f = fopen(file_path, "rb");
-    if (!f) return 0;
-    fclose(f);
-
+    // Tenta abrir como MP4 padrão ou UDTA
     size_t mp4Handle = OpenMP4Source((char*)file_path, MOV_GPMF_TRAK_TYPE, MOV_GPMF_TRAK_SUBTYPE, 0);
     if (!mp4Handle) {
         mp4Handle = OpenMP4SourceUDTA((char*)file_path, 0);
@@ -45,22 +31,17 @@ int has_gpmf_stream(const char* file_path)
     return numPayloads > 0 ? 1 : 0;
 }
 
-// ------------------------
-// Parse GPMF data directly from MP4 file
-// ------------------------
-C_GPMFStream* parse_gpmf_from_file(const char* file_path)
-{
+// MARK: - CORE PARSER
+
+C_GPMFStream* parse_gpmf_from_file(const char* file_path) {
     if (!file_path) return NULL;
 
-    // Abrir MP4
+    // 1. Abertura do Arquivo
     size_t mp4Handle = OpenMP4Source((char*)file_path, MOV_GPMF_TRAK_TYPE, MOV_GPMF_TRAK_SUBTYPE, 0);
     if (!mp4Handle) {
         mp4Handle = OpenMP4SourceUDTA((char*)file_path, 0);
     }
-    if (!mp4Handle) {
-        LOG_ERROR("Failed to open MP4 or UDTA source");
-        return NULL;
-    }
+    if (!mp4Handle) return NULL;
 
     uint32_t numPayloads = GetNumberPayloads(mp4Handle);
     if (numPayloads == 0) {
@@ -68,9 +49,7 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
         return NULL;
     }
 
-    LOG_DEBUG("Found %u payloads to process", numPayloads);
-
-    // Estrutura para acumular samples
+    // Estrutura temporária para acumular dados durante o loop
     typedef struct {
         char type[5];
         C_GPMFSample* samples;
@@ -87,41 +66,41 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
 
     size_t payloadres = 0;
     
-    // LOOP ATRAVÉS DE CADA PAYLOAD
+    // =========================================================
+    // 2. Loop de Payloads (Itera sobre cada pacote de dados)
+    // =========================================================
     for (uint32_t payload_index = 0; payload_index < numPayloads; payload_index++) {
         uint32_t payloadSize = GetPayloadSize(mp4Handle, payload_index);
         
-        // Validação de segurança
-        if (payloadSize == 0 || payloadSize > 10000000) {
-            continue;
-        }
+        // Segurança: Ignora payloads vazios ou gigantes (erro de leitura)
+        if (payloadSize == 0 || payloadSize > 10000000) continue;
 
         payloadres = GetPayloadResource(mp4Handle, payloadres, payloadSize);
         uint32_t* payload = GetPayload(mp4Handle, payloadres, payload_index);
         if (!payload) continue;
 
         GPMF_stream gpmf_stream;
-        if (GPMF_Init(&gpmf_stream, payload, payloadSize) != GPMF_OK) {
-            continue;
-        }
-
-        if (payload_index % 100 == 0) {
-            LOG_DEBUG("Processing payload %u/%u", payload_index + 1, numPayloads);
-        }
+        // CRÍTICO: Passar o tamanho exato em bytes
+        if (GPMF_Init(&gpmf_stream, payload, payloadSize) != GPMF_OK) continue;
 
         GPMF_ResetState(&gpmf_stream);
         
-        // Loop através dos streams
+        // =====================================================
+        // 3. Loop de Streams (GPS, ACCL, GYRO dentro do payload)
+        // =====================================================
         while (GPMF_FindNext(&gpmf_stream, GPMF_KEY_STREAM, GPMF_RECURSE_LEVELS) == GPMF_OK) {
             
+            // Trabalhamos numa cópia para não perder o cursor do loop principal
             GPMF_stream data_stream;
             GPMF_CopyState(&gpmf_stream, &data_stream);
 
+            // Entra na estrutura de dados
             if (GPMF_SeekToSamples(&data_stream) != GPMF_OK) continue;
 
             uint32_t fourcc_key = GPMF_Key(&data_stream);
             if (fourcc_key == 0) continue;
 
+            // Converte FourCC int para string
             char stream_type[5];
             stream_type[0] = (char)((fourcc_key >> 0) & 0xFF);
             stream_type[1] = (char)((fourcc_key >> 8) & 0xFF);
@@ -129,7 +108,7 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
             stream_type[3] = (char)((fourcc_key >> 24) & 0xFF);
             stream_type[4] = '\0';
 
-            // Encontrar ou criar acumulador
+            // 4. Gestão de Memória (Encontrar ou criar acumulador)
             TempStream* ts = NULL;
             for (int i = 0; i < temp_stream_count; i++) {
                 if (strncmp(temp_streams[i].type, stream_type, 4) == 0) {
@@ -138,13 +117,14 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
                 }
             }
 
+            // Novo tipo encontrado? Inicializa struct.
             if (!ts && temp_stream_count < MAX_STREAM_TYPES) {
                 ts = &temp_streams[temp_stream_count++];
                 strncpy(ts->type, stream_type, 5);
                 ts->capacity = 1000;
                 ts->samples = calloc(ts->capacity, sizeof(C_GPMFSample));
                 
-                // Taxa de amostragem estimada
+                // Taxas de amostragem estimadas (serão ajustadas se houver dados precisos)
                 if (strncmp(stream_type, "GPS", 3) == 0) ts->sample_rate = 18.0;
                 else if (strncmp(stream_type, "ACCL", 4) == 0) ts->sample_rate = 200.0;
                 else if (strncmp(stream_type, "GYRO", 4) == 0) ts->sample_rate = 200.0;
@@ -153,26 +133,26 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
 
             if (!ts || !ts->samples) continue;
 
+            // =================================================
+            // 5. Extração e Conversão de Dados
+            // =================================================
             uint32_t samples = GPMF_PayloadSampleCount(&data_stream);
             uint32_t elements = GPMF_ElementsInStruct(&data_stream);
 
             if (ts->elements_per_sample == 0) ts->elements_per_sample = elements;
 
             if (samples > 0 && elements > 0 && elements <= 64) {
-                
-                // --- MUDANÇA PRINCIPAL AQUI ---
-                // Usamos GPMF_ScaledDataSize com GPMF_TYPE_DOUBLE para garantir espaço
-                // Isso calcula o tamanho necessário já convertido para double
+                // Tamanho necessário para Doubles
                 uint32_t buffersize = samples * elements * sizeof(double);
                 
                 if (buffersize > 0 && buffersize < 10000000) {
-                    double* temp_buffer = (double*)malloc(buffersize + 128);
+                    double* temp_buffer = (double*)malloc(buffersize + 128); // Padding de segurança
                     
                     if (temp_buffer) {
-                        // GPMF_ScaledData aplica a escala (SCAL) e converte para double automaticamente
+                        // CRÍTICO: GPMF_ScaledData aplica o fator SCAL e converte unidades
                         if (GPMF_ScaledData(&data_stream, temp_buffer, buffersize, 0, samples, GPMF_TYPE_DOUBLE) == GPMF_OK) {
                             
-                            // Expandir memória
+                            // Realocação se o buffer encher
                             if (ts->sample_count + samples > ts->capacity) {
                                 ts->capacity += samples + 2000;
                                 C_GPMFSample* new_ptr = realloc(ts->samples, ts->capacity * sizeof(C_GPMFSample));
@@ -180,14 +160,13 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
                                 else { free(temp_buffer); continue; }
                             }
 
-                            // Copiar dados já escalados
+                            // Copia os dados convertidos para nossa struct final
                             for (uint32_t i = 0; i < samples; i++) {
                                 C_GPMFSample* sample = &ts->samples[ts->sample_count++];
                                 strncpy(sample->type, stream_type, 5);
                                 sample->timestamp = (double)(ts->sample_count) / ts->sample_rate;
                                 
                                 for (uint32_t j = 0; j < elements && j < 16; j++) {
-                                    // Agora temp_buffer já contém os valores reais (graus, metros, etc.)
                                     sample->values[j] = temp_buffer[i * elements + j];
                                 }
                             }
@@ -202,9 +181,10 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
     if (payloadres) FreePayloadResource(mp4Handle, payloadres);
     CloseSource(mp4Handle);
 
-    // Finalizar e retornar
+    // 6. Finalização e Retorno
     C_GPMFStream* streams = calloc(temp_stream_count + 1, sizeof(C_GPMFStream));
     if (!streams) {
+        // Fallback de erro de memória
         for (int i = 0; i < temp_stream_count; i++) if (temp_streams[i].samples) free(temp_streams[i].samples);
         return NULL;
     }
@@ -217,20 +197,15 @@ C_GPMFStream* parse_gpmf_from_file(const char* file_path)
         streams[i].sample_rate = temp_streams[i].sample_rate;
     }
 
+    // Marcador de fim de array (Sentinela)
     streams[temp_stream_count].type[0] = '\0';
-    LOG_DEBUG("Successfully parsed %d streams", temp_stream_count);
     
     return streams;
 }
 
-// ------------------------
-// MANTER COMPATIBILIDADE (LEGACY)
-// ------------------------
-uint8_t* extract_gpmf_from_mp4(const char* file_path, int32_t* out_size) { return NULL; }
-C_GPMFStream* parse_gpmf_data(const uint8_t* data, int32_t size) { return NULL; }
-void free_gpmf_data(uint8_t* data) { if (data) free(data); }
-void free_parsed_streams(C_GPMFStream* streams)
-{
+// MARK: - MEMORY MANAGEMENT
+
+void free_parsed_streams(C_GPMFStream* streams) {
     if (!streams) return;
     C_GPMFStream* current = streams;
     while (current->type[0] != '\0') {

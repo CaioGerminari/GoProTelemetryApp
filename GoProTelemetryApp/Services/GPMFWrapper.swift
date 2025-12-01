@@ -2,137 +2,141 @@
 //  GPMFWrapper.swift
 //  GoProTelemetryApp
 //
-//  VERSÃO CORRIGIDA - Usa parse_gpmf_from_file
+//  Created by Caio Germinari on 30/11/25.
 //
 
 import Foundation
 
+/// Wrapper responsável por invocar o parser C e converter os resultados para estruturas Swift seguras.
 class GPMFWrapper {
     
-    // MARK: - Public Methods (API Corrigida)
+    // MARK: - Public API
     
-    /// Processa GPMF diretamente do arquivo (MÉTODO CORRETO)
-    static func parseGPMFFromVideo(_ videoURL: URL) -> [GPMFStream] {
-        print("🔍 Processando: \(videoURL.lastPathComponent)")
+    /// Processa um arquivo de vídeo e retorna os streams de telemetria brutos.
+    /// - Parameter url: URL local do arquivo de vídeo (MP4/MOV).
+    /// - Returns: Array de `GPMFStream` contendo os dados brutos.
+    /// - Throws: `GPMFError` em caso de falha de acesso ou parse.
+    static func parse(url: URL) throws -> [GPMFStream] {
+        // 1. Validação de Acesso ao Arquivo
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw GPMFError.fileAccessDenied
+        }
         
-        guard let cFilePath = (videoURL.path as NSString).utf8String else {
-            print("❌ Erro ao converter path para C string")
+        // 2. Conversão de Path para C String
+        guard let cFilePath = (url.path as NSString).utf8String else {
+            throw GPMFError.invalidData
+        }
+        
+        print("🔌 GPMFWrapper: Iniciando extração nativa de \(url.lastPathComponent)")
+        
+        // 3. Chamada ao Código C
+        // parse_gpmf_from_file retorna um ponteiro para um array de C_GPMFStream alocado no heap
+        guard let cStreamsPtr = parse_gpmf_from_file(cFilePath) else {
+            // Se retornou NULL, significa que não achou telemetria ou falhou ao abrir
+            print("⚠️ GPMFWrapper: parse_gpmf_from_file retornou NULL")
             return []
         }
         
-        // ✅ USA A NOVA API QUE PROCESSA PAYLOAD POR PAYLOAD
-        guard let cStreams = parse_gpmf_from_file(cFilePath) else {
-            print("❌ parse_gpmf_from_file retornou NULL")
-            return []
-        }
-        
+        // 4. Gestão de Memória (CRÍTICO)
+        // Garante que a memória alocada pelo 'malloc' no C seja liberada ao final desta função
         defer {
-            free_parsed_streams(cStreams)
+            free_parsed_streams(cStreamsPtr)
         }
         
-        let swiftStreams = convertCStreamsToSwift(cStreams)
-        print("✅ Convertidos \(swiftStreams.count) streams para Swift")
+        // 5. Conversão para Swift
+        let streams = convertToSwift(cStreamsPtr: cStreamsPtr)
+        print("🔌 GPMFWrapper: Sucesso. \(streams.count) streams convertidos.")
         
-        return swiftStreams
+        return streams
     }
     
-    /// Valida se o vídeo contém GPMF
-    static func validateGPMFData(in videoURL: URL) -> Bool {
-        guard let cFilePath = (videoURL.path as NSString).utf8String else {
-            return false
-        }
+    /// Verifica rapidamente se o arquivo possui trilha GPMF válida sem extrair todos os dados.
+    static func hasTelemetry(url: URL) -> Bool {
+        guard let cFilePath = (url.path as NSString).utf8String else { return false }
         return has_gpmf_stream(cFilePath) != 0
     }
     
-    /// Obtém informações sobre os streams
-    static func getStreamInfo(from videoURL: URL) -> [GPMFStreamInfo] {
-        let streams = parseGPMFFromVideo(videoURL)
-        return streams.map { GPMFStreamInfo(from: $0) }
-    }
+    // MARK: - Private Conversion Helpers
     
-    // MARK: - Private Methods
-    
-    private static func convertCStreamsToSwift(_ cStreams: UnsafeMutablePointer<C_GPMFStream>) -> [GPMFStream] {
+    /// Converte a lista encadeada/array C em array Swift
+    private static func convertToSwift(cStreamsPtr: UnsafeMutablePointer<C_GPMFStream>) -> [GPMFStream] {
         var swiftStreams: [GPMFStream] = []
-        var currentStream = cStreams
+        var currentPtr = cStreamsPtr
         
-        // Iterar até encontrar stream vazio (type[0] == 0)
-        while currentStream.pointee.type.0 != 0 {
-            let swiftStream = convertCStreamToSwift(currentStream.pointee)
-            swiftStreams.append(swiftStream)
-            currentStream = currentStream.advanced(by: 1)
+        // Itera sobre o array C até encontrar o terminador (onde type[0] == '\0')
+        while currentPtr.pointee.type.0 != 0 {
+            let cStream = currentPtr.pointee
+            
+            if let stream = convertSingleStream(cStream) {
+                swiftStreams.append(stream)
+            }
+            
+            // Avança o ponteiro para o próximo item do array C (aritmética de ponteiros)
+            currentPtr = currentPtr.advanced(by: 1)
         }
         
         return swiftStreams
     }
     
-    private static func convertCStreamToSwift(_ cStream: C_GPMFStream) -> GPMFStream {
-        let typeString = fourCCString(from: cStream.type)
-        let type = GPMFStreamType.from(fourCC: typeString)
+    /// Converte uma única struct C_GPMFStream para GPMFStream (Swift)
+    private static func convertSingleStream(_ cStream: C_GPMFStream) -> GPMFStream? {
+        // 1. Converter Tipo (FourCC Tuple -> String -> Enum)
+        let typeStr = fourCCString(from: cStream.type)
+        let type = GPMFStreamType.from(fourCC: typeStr)
         
-        var samples: [GPMFSample] = []
-        let sampleCount = Int(cStream.sample_count)
+        // 2. Validação de Segurança
+        let count = Int(cStream.sample_count)
+        guard count > 0, let samplesPtr = cStream.samples else { return nil }
         
-        // Verificação de segurança
-        guard let cSamplesPtr = cStream.samples, sampleCount > 0 else {
-            return GPMFStream(
-                type: type,
-                samples: [],
-                sampleCount: 0,
-                elementsPerSample: 0,
-                sampleRate: 0
-            )
-        }
+        let elements = Int(cStream.elements_per_sample)
         
-        // Converter cada sample
-        for i in 0..<sampleCount {
-            let cSample = cSamplesPtr[i]
-            let timestamp = cSample.timestamp
+        // 3. Converter Amostras
+        var swiftSamples: [GPMFSample] = []
+        swiftSamples.reserveCapacity(count)
+        
+        for i in 0..<count {
+            let cSample = samplesPtr[i] // Acesso direto ao buffer C
             
-            // Converter valores (tuple → array)
-            let values = tuple16ToArray(
-                cSample.values,
-                count: Int(cStream.elements_per_sample)
-            )
+            // Converte a tupla fixa C (double[16]) para Array dinâmico [Double]
+            let values = tupleToArray(cSample.values, validCount: elements)
             
-            samples.append(GPMFSample(timestamp: timestamp, values: values))
+            swiftSamples.append(GPMFSample(
+                timestamp: cSample.timestamp,
+                values: values
+            ))
         }
         
         return GPMFStream(
             type: type,
-            samples: samples,
-            sampleCount: sampleCount,
-            elementsPerSample: Int(cStream.elements_per_sample),
+            samples: swiftSamples,
+            sampleCount: count,
+            elementsPerSample: elements,
             sampleRate: cStream.sample_rate
         )
     }
     
-    // MARK: - Utilities
+    // MARK: - Low Level Utils
     
-    /// Converte tuple CChar (FourCC) para String
+    /// Converte a tupla de caracteres C (char, char, char, char, char) para String Swift
     private static func fourCCString(from tuple: (CChar, CChar, CChar, CChar, CChar)) -> String {
-        let chars = [tuple.0, tuple.1, tuple.2, tuple.3]
-        let bytes = chars.map { UInt8(bitPattern: $0) }
-        return String(bytes: bytes, encoding: .ascii) ?? "UNKN"
+        let bytes = [tuple.0, tuple.1, tuple.2, tuple.3]
+        // Filtra nulos e converte para UInt8
+        let validBytes = bytes.map { UInt8(bitPattern: $0) }.filter { $0 != 0 }
+        return String(bytes: validBytes, encoding: .ascii) ?? "UNKN"
     }
     
-    /// Converte tuple de 16 valores (double[16]) para array Swift
-    private static func tuple16ToArray(
-        _ tuple: (
-            Double, Double, Double, Double,
-            Double, Double, Double, Double,
-            Double, Double, Double, Double,
-            Double, Double, Double, Double
-        ),
-        count: Int
-    ) -> [Double] {
-        let full = [
-            tuple.0, tuple.1, tuple.2, tuple.3,
-            tuple.4, tuple.5, tuple.6, tuple.7,
-            tuple.8, tuple.9, tuple.10, tuple.11,
-            tuple.12, tuple.13, tuple.14, tuple.15
-        ]
-        
-        return Array(full.prefix(count))
+    /// Converte a tupla gigante de 16 doubles do C para [Double] do Swift
+    /// Swift importa arrays de tamanho fixo C (double values[16]) como tuplas gigantes.
+    private static func tupleToArray(_ tuple: (Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double), validCount: Int) -> [Double] {
+        // Usamos ponteiros inseguros para ler a tupla como um buffer contíguo de memória
+        var t = tuple
+        return withUnsafePointer(to: &t) { ptr in
+            ptr.withMemoryRebound(to: Double.self, capacity: 16) { doublePtr in
+                // Cria um array Swift copiando apenas os elementos válidos
+                // Limitamos a 16 para segurança, caso validCount venha errado do C
+                let safeCount = min(validCount, 16)
+                return Array(UnsafeBufferPointer(start: doublePtr, count: safeCount))
+            }
+        }
     }
 }

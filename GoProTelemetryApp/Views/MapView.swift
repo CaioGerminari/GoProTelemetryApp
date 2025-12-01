@@ -9,127 +9,184 @@ import SwiftUI
 import MapKit
 
 struct MapView: View {
-    let points: [TelemetryDataPoint]
+    // MARK: - Properties
     
-    var coordinates: [CLLocationCoordinate2D] {
-        points.compactMap { $0.coordinate }
-    }
+    let telemetryData: [TelemetryData]
+    
+    @State private var mapType: MKMapType = .standard
+    @State private var showControls: Bool = true
+    
+    // MARK: - Body
     
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.spacingMedium) {
-            headerSection
-            
-            if coordinates.count > 1 {
-                InteractiveMapView(points: points)
-                    .frame(height: 350)
-                    .cornerRadius(12)
+        ZStack(alignment: .topTrailing) {
+            // 1. O Mapa Nativo
+            if telemetryData.isEmpty {
+                EmptyStateView(
+                    title: "Sem Dados de GPS",
+                    systemImage: "location.slash",
+                    description: "Este vídeo não possui dados de localização válidos."
+                )
+                .background(Theme.background)
             } else {
-                noDataView
+                MapContainer(data: telemetryData, mapType: mapType)
+                    .ignoresSafeArea()
             }
-        }
-        .padding(Theme.spacingLarge)
-        .modernCard()
-        .padding(Theme.spacingLarge)
-    }
-    
-    // MARK: - Header Section
-    private var headerSection: some View {
-        HStack {
-            Label("Trajeto GPS", systemImage: "map")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(Theme.textPrimary)
             
-            Spacer()
-            
-            Text("\(coordinates.count) pontos no mapa")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Theme.textSecondary)
+            // 2. Controles Flutuantes
+            if !telemetryData.isEmpty {
+                mapControls
+                    .padding(Theme.padding)
+            }
         }
     }
     
-    // MARK: - No Data View
-    private var noDataView: some View {
-        ZStack {
-            Color.black.opacity(0.2)
-            VStack(spacing: Theme.spacingSmall) {
-                Image(systemName: "location.slash")
-                    .font(.system(size: 40))
-                    .foregroundColor(Theme.textSecondary)
-                Text("Sem dados GPS disponíveis")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Theme.textSecondary)
+    // MARK: - Subviews
+    
+    private var mapControls: some View {
+        VStack(spacing: 8) {
+            Picker("Tipo de Mapa", selection: $mapType) {
+                Text("Padrão").tag(MKMapType.standard)
+                Text("Híbrido").tag(MKMapType.hybrid)
+                Text("Satélite").tag(MKMapType.satellite)
             }
+            .pickerStyle(.segmented)
+            .frame(width: 200)
+            .padding(8)
+            .background(.thinMaterial)
+            .cornerRadius(Theme.cornerRadius)
+            .shadow(radius: 4)
         }
-        .frame(height: 200)
-        .cornerRadius(12)
+    }
+}
+
+// MARK: - MapKit Wrapper (NSViewRepresentable)
+
+/// Wrapper para usar o MKMapView clássico no SwiftUI (necessário para Polylines customizadas no macOS 13)
+struct MapContainer: NSViewRepresentable {
+    let data: [TelemetryData]
+    let mapType: MKMapType
+    
+    func makeNSView(context: Context) -> MKMapView {
+        let mapView = MKMapView()
+        mapView.delegate = context.coordinator
+        mapView.showsCompass = true
+        mapView.showsScale = true
+        mapView.showsZoomControls = true
+        
+        return mapView
+    }
+    
+    func updateNSView(_ mapView: MKMapView, context: Context) {
+        // Atualiza o tipo do mapa
+        if mapView.mapType != mapType {
+            mapView.mapType = mapType
+        }
+        
+        // Verifica se os dados mudaram para não redesenhar à toa
+        // Usamos o ID do primeiro ponto como "hash" simples da sessão
+        let currentSessionId = data.first?.id
+        
+        if context.coordinator.lastSessionId != currentSessionId {
+            updateOverlays(on: mapView, context: context)
+            context.coordinator.lastSessionId = currentSessionId
+        }
+    }
+    
+    private func updateOverlays(on mapView: MKMapView, context: Context) {
+        mapView.removeOverlays(mapView.overlays)
+        mapView.removeAnnotations(mapView.annotations)
+        
+        guard !data.isEmpty else { return }
+        
+        // 1. Criar Polyline (Linha do trajeto)
+        let coordinates = data.map { $0.coordinate }
+        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+        mapView.addOverlay(polyline)
+        
+        // 2. Adicionar Pinos de Início e Fim
+        if let start = coordinates.first {
+            let startPin = MKPointAnnotation()
+            startPin.coordinate = start
+            startPin.title = "Início"
+            mapView.addAnnotation(startPin)
+        }
+        
+        if let end = coordinates.last {
+            let endPin = MKPointAnnotation()
+            endPin.coordinate = end
+            endPin.title = "Fim"
+            mapView.addAnnotation(endPin)
+        }
+        
+        // 3. Ajustar Zoom para caber tudo
+        // Adiciona um padding para a linha não ficar colada na borda
+        let rect = polyline.boundingMapRect
+        mapView.setVisibleMapRect(rect, edgePadding: NSEdgeInsets(top: 50, left: 50, bottom: 50, right: 50), animated: true)
+    }
+    
+    // MARK: - Coordinator
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, MKMapViewDelegate {
+        var parent: MapContainer
+        var lastSessionId: UUID? // Para evitar updates desnecessários
+        
+        init(_ parent: MapContainer) {
+            self.parent = parent
+        }
+        
+        // Renderizador da Linha (Cor e Espessura)
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let polyline = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                
+                // Usa a cor do Tema (convertida para NSColor)
+                renderer.strokeColor = NSColor(Theme.Data.color(for: .gps))
+                renderer.lineWidth = 4
+                return renderer
+            }
+            return MKOverlayRenderer(overlay: overlay)
+        }
+        
+        // Renderizador dos Pinos (Start/End)
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard annotation is MKPointAnnotation else { return nil }
+            
+            let identifier = "Pin"
+            var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+            
+            if annotationView == nil {
+                annotationView = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                annotationView?.canShowCallout = true
+            } else {
+                annotationView?.annotation = annotation
+            }
+            
+            // Customiza as cores dos pinos
+            if annotation.title == "Início" {
+                annotationView?.markerTintColor = .green
+                annotationView?.glyphImage = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)
+            } else {
+                annotationView?.markerTintColor = .red
+                annotationView?.glyphImage = NSImage(systemSymbolName: "flag.checkered", accessibilityDescription: nil)
+            }
+            
+            return annotationView
+        }
     }
 }
 
 // MARK: - Preview
-#Preview {
-    MapView(points: [
-        TelemetryDataPoint(
-            timestamp: 0,
-            latitude: -23.5505,
-            longitude: -46.6333,
-            altitude: 760,
-            speed: 15.0,
-            accelerationX: 0.1,
-            accelerationY: 0.2,
-            accelerationZ: 9.8,
-            gyroX: 0.05,
-            gyroY: 0.1,
-            gyroZ: 0.02,
-            temperature: 25.0
-        ),
-        TelemetryDataPoint(
-            timestamp: 1,
-            latitude: -23.5510,
-            longitude: -46.6340,
-            altitude: 765,
-            speed: 18.0,
-            accelerationX: 0.2,
-            accelerationY: 0.1,
-            accelerationZ: 9.7,
-            gyroX: 0.06,
-            gyroY: 0.09,
-            gyroZ: 0.03,
-            temperature: 26.0
-        ),
-        TelemetryDataPoint(
-            timestamp: 2,
-            latitude: -23.5515,
-            longitude: -46.6350,
-            altitude: 770,
-            speed: 20.0,
-            accelerationX: 0.3,
-            accelerationY: 0.05,
-            accelerationZ: 9.6,
-            gyroX: 0.07,
-            gyroY: 0.08,
-            gyroZ: 0.04,
-            temperature: 27.0
-        )
-    ])
-    .frame(width: 800, height: 500)
-}
 
-#Preview("No Data") {
-    MapView(points: [
-        TelemetryDataPoint(
-            timestamp: 0,
-            latitude: nil,
-            longitude: nil,
-            altitude: nil,
-            speed: nil,
-            accelerationX: 0.1,
-            accelerationY: 0.2,
-            accelerationZ: 9.8,
-            gyroX: 0.05,
-            gyroY: 0.1,
-            gyroZ: 0.02,
-            temperature: 25.0
-        )
+#Preview {
+    MapView(telemetryData: [
+        TelemetryData(timestamp: 0, latitude: -25.4284, longitude: -49.2733, altitude: 0, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(timestamp: 1, latitude: -25.4290, longitude: -49.2740, altitude: 0, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(timestamp: 2, latitude: -25.4300, longitude: -49.2750, altitude: 0, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil)
     ])
-    .frame(width: 800, height: 500)
+    .frame(width: 800, height: 600)
 }
