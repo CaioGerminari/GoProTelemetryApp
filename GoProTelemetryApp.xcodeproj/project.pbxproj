@@ -8,12 +8,31 @@
 
 /* Begin PBXFileReference section */
 		C80ED3B22EDC8168004A9AA1 /* GoProTelemetryApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoProTelemetryApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C80ED3D02EDC8222004A9AA1 /* GoProTelemetryApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "GoProTelemetryApp-Bridging-Header.h"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		C80ED4102EDCC317004A9AA1 /* Exceptions for "GoProTelemetryApp" folder in "Copy Bundle Resources" phase from "GoProTelemetryApp" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = C80ED3B02EDC8168004A9AA1 /* Resources */;
+			membershipExceptions = (
+				Services/GPMFBridge.h,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C80ED3B42EDC8168004A9AA1 /* GoProTelemetryApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C80ED4102EDCC317004A9AA1 /* Exceptions for "GoProTelemetryApp" folder in "Copy Bundle Resources" phase from "GoProTelemetryApp" target */,
+			);
 			path = GoProTelemetryApp;
+			sourceTree = "<group>";
+		};
+		C80ED3C62EDC81CE004A9AA1 /* gpmf-parser */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "gpmf-parser";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -32,8 +51,10 @@
 		C80ED3A92EDC8168004A9AA1 = {
 			isa = PBXGroup;
 			children = (
+				C80ED3C62EDC81CE004A9AA1 /* gpmf-parser */,
 				C80ED3B42EDC8168004A9AA1 /* GoProTelemetryApp */,
 				C80ED3B32EDC8168004A9AA1 /* Products */,
+				C80ED3D02EDC8222004A9AA1 /* GoProTelemetryApp-Bridging-Header.h */,
 			);
 			sourceTree = "<group>";
 		};
@@ -62,6 +83,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				C80ED3B42EDC8168004A9AA1 /* GoProTelemetryApp */,
+				C80ED3C62EDC81CE004A9AA1 /* gpmf-parser */,
 			);
 			name = GoProTelemetryApp;
 			packageProductDependencies = (
@@ -82,6 +104,7 @@
 				TargetAttributes = {
 					C80ED3B12EDC8168004A9AA1 = {
 						CreatedOnToolsVersion = 26.1.1;
+						LastSwiftMigration = 2610;
 					};
 				};
 			};
@@ -250,6 +273,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -272,6 +296,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "GoProTelemetryApp-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -282,6 +308,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -304,6 +331,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "GoProTelemetryApp-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
