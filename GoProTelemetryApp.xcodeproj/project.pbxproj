@@ -11,6 +11,16 @@
 		C80ED3D02EDC8222004A9AA1 /* GoProTelemetryApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "GoProTelemetryApp-Bridging-Header.h"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C83DCE122EDDF17900724BE7 /* Exceptions for "GoProTelemetryApp" folder in "GoProTelemetryApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C80ED3B12EDC8168004A9AA1 /* GoProTelemetryApp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 		C80ED4102EDCC317004A9AA1 /* Exceptions for "GoProTelemetryApp" folder in "Copy Bundle Resources" phase from "GoProTelemetryApp" target */ = {
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
@@ -25,6 +35,7 @@
 		C80ED3B42EDC8168004A9AA1 /* GoProTelemetryApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				C83DCE122EDDF17900724BE7 /* Exceptions for "GoProTelemetryApp" folder in "GoProTelemetryApp" target */,
 				C80ED4102EDCC317004A9AA1 /* Exceptions for "GoProTelemetryApp" folder in "Copy Bundle Resources" phase from "GoProTelemetryApp" target */,
 			);
 			path = GoProTelemetryApp;
@@ -283,6 +294,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GoProTelemetryApp/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -318,6 +330,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GoProTelemetryApp/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
