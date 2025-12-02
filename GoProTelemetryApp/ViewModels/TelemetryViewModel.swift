@@ -8,7 +8,8 @@
 import Foundation
 import SwiftUI
 import Combine
-import UniformTypeIdentifiers // CORREÇÃO: Import necessário para UTType
+import UniformTypeIdentifiers
+import AVFoundation
 
 @MainActor
 class TelemetryViewModel: ObservableObject {
@@ -27,6 +28,9 @@ class TelemetryViewModel: ObservableObject {
     @Published var showExportSuccess: Bool = false
     @Published var lastExportedURL: URL?
     
+    // Var para controle de licença (Flow Pro)
+    @Published var showPurchaseSheet: Bool = false
+    
     // MARK: - Dependencies
     
     private let fileManager = FileManagerService()
@@ -40,7 +44,6 @@ class TelemetryViewModel: ObservableObject {
                 let url = try await fileManager.pickVideoFile()
                 await processVideo(url: url)
             } catch {
-                // CORREÇÃO: Agora funciona porque FileError é Equatable
                 if let fileError = error as? FileError, fileError == .operationCancelled {
                     return
                 } else {
@@ -56,17 +59,31 @@ class TelemetryViewModel: ObservableObject {
             return
         }
         
+        startLoading("Lendo metadados do vídeo...")
+        
+        // 1. Metadados do Arquivo (Data/Duração)
+        let metadata = await extractVideoMetadata(from: url)
+        
         startLoading("Extraindo telemetria...")
         
         Task.detached(priority: .userInitiated) {
             do {
-                let streams = try GPMFWrapper.parse(url: url)
+                // 2. Extração Bruta (C)
+                // CORREÇÃO 1: Desestruturar a tupla (streams + deviceName)
+                let (streams, deviceName) = try GPMFWrapper.parse(url: url)
                 
                 await MainActor.run {
                     self.processingMessage = "Sincronizando sensores..."
                 }
                 
-                let newSession = GPMFTelemetryMapper.makeSession(from: streams, videoUrl: url)
+                // 3. Mapeamento e Limpeza (Swift)
+                // CORREÇÃO 2: Passar o deviceName
+                let newSession = GPMFTelemetryMapper.makeSession(
+                    from: streams,
+                    videoUrl: url,
+                    metadata: metadata,
+                    deviceName: deviceName
+                )
                 
                 await MainActor.run {
                     self.session = newSession
@@ -82,16 +99,55 @@ class TelemetryViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Metadata Helper
+    
+    private func extractVideoMetadata(from url: URL) async -> VideoMetadata {
+        let asset = AVURLAsset(url: url)
+        
+        let duration: Double
+        if let cmTime = try? await asset.load(.duration) {
+            duration = cmTime.seconds
+        } else {
+            duration = 0
+        }
+        
+        var creationDate = Date()
+        if let commonMetadata = try? await asset.load(.commonMetadata) {
+            if let dateItem = commonMetadata.first(where: { $0.commonKey == .commonKeyCreationDate }),
+               let dateValue = try? await dateItem.load(.value) as? Date {
+                creationDate = dateValue
+            } else if let dateStringItem = commonMetadata.first(where: { $0.commonKey == .commonKeyCreationDate }),
+                      let dateString = try? await dateStringItem.load(.value) as? String {
+                let formatter = ISO8601DateFormatter()
+                if let date = formatter.date(from: dateString) {
+                    creationDate = date
+                }
+            }
+        }
+        
+        // Fallback para atributo de arquivo se metadata interno falhar
+        if creationDate.timeIntervalSinceNow > -10 {
+             if let attr = try? FileManager.default.attributesOfItem(atPath: url.path),
+                let fileDate = attr[.creationDate] as? Date {
+                 creationDate = fileDate
+             }
+        }
+        
+        return VideoMetadata(duration: duration, creationDate: creationDate)
+    }
+    
     // MARK: - Actions: Exportação
     
     func exportTelemetry(settings: ExportSettings) {
         guard let currentSession = session else { return }
         
+        // Exemplo de check de licença (se implementado)
+        // if LicenseService.shared.requiresPro(for: settings) { self.showPurchaseSheet = true; return }
+        
         startLoading("Gerando arquivo \(settings.defaultFormat.rawValue)...")
         
         Task.detached {
             do {
-                // Acessar sampleRate de forma segura (copiando valor antes da task)
                 let sampleRate = await self.appSettings.general.sampleRate
                 
                 let tempURL = try self.exportService.export(
@@ -117,7 +173,6 @@ class TelemetryViewModel: ObservableObject {
     private func saveExportedFile(tempURL: URL, format: ExportFormat) {
         Task {
             do {
-                // CORREÇÃO: Sintaxe limpa para UTType
                 let contentType: UTType
                 switch format {
                 case .gpx: contentType = .gpx
@@ -171,4 +226,10 @@ class TelemetryViewModel: ObservableObject {
         self.errorMessage = error.localizedDescription
         self.showError = true
     }
+}
+
+// Helper Struct para passar metadados
+struct VideoMetadata {
+    let duration: Double
+    let creationDate: Date
 }

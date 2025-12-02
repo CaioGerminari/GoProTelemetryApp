@@ -5,6 +5,14 @@
 //  Created by Caio Germinari on 30/11/25.
 //
 
+//
+//  MapView.swift
+//  GoProTelemetryApp
+//
+//  Created by Caio Germinari on 30/11/25.
+//  Refatorado: Correção de optionals para MapKit.
+//
+
 import SwiftUI
 import MapKit
 
@@ -62,7 +70,6 @@ struct MapView: View {
 
 // MARK: - MapKit Wrapper (NSViewRepresentable)
 
-/// Wrapper para usar o MKMapView clássico no SwiftUI (necessário para Polylines customizadas no macOS 13)
 struct MapContainer: NSViewRepresentable {
     let data: [TelemetryData]
     let mapType: MKMapType
@@ -78,13 +85,10 @@ struct MapContainer: NSViewRepresentable {
     }
     
     func updateNSView(_ mapView: MKMapView, context: Context) {
-        // Atualiza o tipo do mapa
         if mapView.mapType != mapType {
             mapView.mapType = mapType
         }
         
-        // Verifica se os dados mudaram para não redesenhar à toa
-        // Usamos o ID do primeiro ponto como "hash" simples da sessão
         let currentSessionId = data.first?.id
         
         if context.coordinator.lastSessionId != currentSessionId {
@@ -97,14 +101,18 @@ struct MapContainer: NSViewRepresentable {
         mapView.removeOverlays(mapView.overlays)
         mapView.removeAnnotations(mapView.annotations)
         
-        guard !data.isEmpty else { return }
+        // CORREÇÃO: Filtrar apenas coordenadas válidas (não opcionais)
+        let coordinates = data.compactMap { $0.coordinate }
         
-        // 1. Criar Polyline (Linha do trajeto)
-        let coordinates = data.map { $0.coordinate }
+        guard !coordinates.isEmpty else { return }
+        
+        // 1. Criar Polyline
+        // O construtor do MKPolyline espera um ponteiro UnsafePointer<CLLocationCoordinate2D>
+        // Swift converte array [CLLocationCoordinate2D] automaticamente para ponteiro
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
         mapView.addOverlay(polyline)
         
-        // 2. Adicionar Pinos de Início e Fim
+        // 2. Adicionar Pinos
         if let start = coordinates.first {
             let startPin = MKPointAnnotation()
             startPin.coordinate = start
@@ -119,8 +127,7 @@ struct MapContainer: NSViewRepresentable {
             mapView.addAnnotation(endPin)
         }
         
-        // 3. Ajustar Zoom para caber tudo
-        // Adiciona um padding para a linha não ficar colada na borda
+        // 3. Zoom
         let rect = polyline.boundingMapRect
         mapView.setVisibleMapRect(rect, edgePadding: NSEdgeInsets(top: 50, left: 50, bottom: 50, right: 50), animated: true)
     }
@@ -133,18 +140,15 @@ struct MapContainer: NSViewRepresentable {
     
     class Coordinator: NSObject, MKMapViewDelegate {
         var parent: MapContainer
-        var lastSessionId: UUID? // Para evitar updates desnecessários
+        var lastSessionId: UUID?
         
         init(_ parent: MapContainer) {
             self.parent = parent
         }
         
-        // Renderizador da Linha (Cor e Espessura)
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
-                
-                // Usa a cor do Tema (convertida para NSColor)
                 renderer.strokeColor = NSColor(Theme.Data.color(for: .gps))
                 renderer.lineWidth = 4
                 return renderer
@@ -152,7 +156,6 @@ struct MapContainer: NSViewRepresentable {
             return MKOverlayRenderer(overlay: overlay)
         }
         
-        // Renderizador dos Pinos (Start/End)
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard annotation is MKPointAnnotation else { return nil }
             
@@ -166,7 +169,6 @@ struct MapContainer: NSViewRepresentable {
                 annotationView?.annotation = annotation
             }
             
-            // Customiza as cores dos pinos
             if annotation.title == "Início" {
                 annotationView?.markerTintColor = .green
                 annotationView?.glyphImage = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)
@@ -180,13 +182,28 @@ struct MapContainer: NSViewRepresentable {
     }
 }
 
-// MARK: - Preview
+// MARK: - Preview (Mock Data Updated)
 
 #Preview {
     MapView(telemetryData: [
-        TelemetryData(timestamp: 0, latitude: -25.4284, longitude: -49.2733, altitude: 0, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil),
-        TelemetryData(timestamp: 1, latitude: -25.4290, longitude: -49.2740, altitude: 0, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil),
-        TelemetryData(timestamp: 2, latitude: -25.4300, longitude: -49.2750, altitude: 0, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil)
+        TelemetryData(
+            timestamp: 0,
+            latitude: -25.4284, longitude: -49.2733, altitude: 0,
+            speed2D: 0, speed3D: 0,
+            acceleration: nil, gravity: nil, gyro: nil,
+            cameraOrientation: nil, imageOrientation: nil,
+            iso: nil, shutterSpeed: nil, whiteBalance: nil, whiteBalanceRGB: nil,
+            temperature: nil, audioDiagnostic: nil, faces: nil, scene: nil
+        ),
+        TelemetryData(
+            timestamp: 1,
+            latitude: -25.4290, longitude: -49.2740, altitude: 0,
+            speed2D: 0, speed3D: 0,
+            acceleration: nil, gravity: nil, gyro: nil,
+            cameraOrientation: nil, imageOrientation: nil,
+            iso: nil, shutterSpeed: nil, whiteBalance: nil, whiteBalanceRGB: nil,
+            temperature: nil, audioDiagnostic: nil, faces: nil, scene: nil
+        )
     ])
     .frame(width: 800, height: 600)
 }

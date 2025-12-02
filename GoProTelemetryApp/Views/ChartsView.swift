@@ -36,7 +36,7 @@ struct ChartsView: View {
         var color: Color {
             switch self {
             case .speed: return Theme.Data.color(for: .gps)
-            case .altitude: return Theme.Data.color(for: .gyroscope) // Usando cor secundária
+            case .altitude: return Theme.Data.color(for: .gyroscope)
             case .acceleration: return Theme.Data.color(for: .accelerometer)
             }
         }
@@ -93,7 +93,7 @@ struct ChartsView: View {
                             .foregroundColor(selectedMetric.color)
                             .contentTransition(.numericText())
                     } else {
-                        // Valor padrão (Média ou Máximo) quando nada selecionado
+                        // Valor padrão (Máximo) quando nada selecionado
                         Text("-")
                             .font(Theme.Font.valueLarge)
                             .foregroundColor(Theme.secondary)
@@ -194,7 +194,6 @@ struct ChartsView: View {
     // MARK: - Helpers & Logic
     
     /// Dados otimizados para renderização (Downsampling simples)
-    /// Se tiver 50.000 pontos, o gráfico trava. Pegamos 1 a cada N pontos.
     private var downsampledData: [TelemetryData] {
         let maxPoints = 1000 // Limite visual razoável
         if data.count <= maxPoints { return data }
@@ -207,19 +206,26 @@ struct ChartsView: View {
         return result
     }
     
-    /// Extrai o valor numérico baseado na métrica selecionada
+    /// Extrai o valor numérico baseado na métrica selecionada (CORREÇÃO DE OPCIONAIS)
     private func value(for point: TelemetryData) -> Double {
         switch selectedMetric {
-        case .speed: return point.speed2D * 3.6 // m/s -> km/h
-        case .altitude: return point.altitude
-        case .acceleration: return point.acceleration?.magnitude ?? 0.0
+        case .speed:
+            // Desembrulha speed2D com fallback para 0.0
+            return (point.speed2D ?? 0.0) * 3.6 // m/s -> km/h
+            
+        case .altitude:
+            // Desembrulha altitude
+            return point.altitude ?? 0.0
+            
+        case .acceleration:
+            // Magnitude já é computada, mas acceleration é opcional
+            return point.acceleration?.magnitude ?? 0.0
         }
     }
     
-    /// Encontra o valor exato no cursor (interpolação ou busca simples)
+    /// Encontra o valor exato no cursor
     private var selectedValue: Double? {
         guard let time = selectedX else { return nil }
-        // Busca o ponto mais próximo (pode ser otimizado com busca binária se necessário)
         if let point = data.min(by: { abs($0.timestamp - time) < abs($1.timestamp - time) }) {
             return value(for: point)
         }
@@ -232,14 +238,22 @@ struct ChartsView: View {
     }
 }
 
-// MARK: - Preview
+// MARK: - Preview (Updated with new Model)
 
 #Preview {
     ChartsView(data: [
-        TelemetryData(timestamp: 0, latitude: 0, longitude: 0, altitude: 10, speed2D: 5, speed3D: 0, acceleration: nil, gyro: nil),
-        TelemetryData(timestamp: 1, latitude: 0, longitude: 0, altitude: 12, speed2D: 8, speed3D: 0, acceleration: nil, gyro: nil),
-        TelemetryData(timestamp: 2, latitude: 0, longitude: 0, altitude: 15, speed2D: 12, speed3D: 0, acceleration: nil, gyro: nil),
-        TelemetryData(timestamp: 3, latitude: 0, longitude: 0, altitude: 14, speed2D: 10, speed3D: 0, acceleration: nil, gyro: nil),
+        TelemetryData(
+            timestamp: 0, latitude: 0, longitude: 0, altitude: 10, speed2D: 5, speed3D: 0,
+            acceleration: nil, gravity: nil, gyro: nil, cameraOrientation: nil, imageOrientation: nil,
+            iso: nil, shutterSpeed: nil, whiteBalance: nil, whiteBalanceRGB: nil, temperature: nil,
+            audioDiagnostic: nil, faces: nil, scene: nil
+        ),
+        TelemetryData(
+            timestamp: 1, latitude: 0, longitude: 0, altitude: 12, speed2D: 8, speed3D: 0,
+            acceleration: nil, gravity: nil, gyro: nil, cameraOrientation: nil, imageOrientation: nil,
+            iso: nil, shutterSpeed: nil, whiteBalance: nil, whiteBalanceRGB: nil, temperature: nil,
+            audioDiagnostic: nil, faces: nil, scene: nil
+        )
     ])
     .frame(width: 800, height: 600)
 }

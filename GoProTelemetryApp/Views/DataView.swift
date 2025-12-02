@@ -20,25 +20,28 @@ struct DataView: View {
     
     /// Filtra e limita os dados para exibição segura
     var filteredData: [TelemetryData] {
-        let source = searchText.isEmpty ? data : data.filter { point in
-            // Busca rápida por tempo ou velocidade
-            point.formattedTime.contains(searchText) ||
-            String(format: "%.0f", point.speed2D * 3.6).contains(searchText)
+        let source: [TelemetryData]
+        
+        if searchText.isEmpty {
+            source = data
+        } else {
+            // Busca rápida por tempo, cena ou velocidade
+            source = data.filter { point in
+                point.formattedTime.contains(searchText) ||
+                (point.scene?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+                String(format: "%.0f", point.speed2D ?? 0 * 3.6).contains(searchText)
+            }
         }
         
         // Retorna apenas o slice até o limite atual
         return Array(source.prefix(limit))
     }
     
-    var totalCount: Int {
-        searchText.isEmpty ? data.count : filteredData.count
-    }
-    
     // MARK: - Body
     
     var body: some View {
         VStack(spacing: 0) {
-            // 1. Barra de Ferramentas (Busca e Contagem)
+            // 1. Barra de Ferramentas
             headerView
             
             // 2. Cabeçalho da Tabela
@@ -67,7 +70,7 @@ struct DataView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(Theme.secondary)
                 
-                TextField("Buscar tempo (ex: 12.5) ou velocidade...", text: $searchText)
+                TextField("Buscar tempo, cena (ex: SNOW) ou velocidade...", text: $searchText)
                     .textFieldStyle(.plain)
                     .onChange(of: searchText) { _ in
                         limit = 100 // Reseta paginação ao buscar
@@ -96,19 +99,23 @@ struct DataView: View {
     private var tableHeader: some View {
         HStack(spacing: Theme.Spacing.small) {
             Text("Tempo")
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
             
-            Text("Coordenadas (Lat, Lon)")
+            Text("Coordenadas")
                 .frame(maxWidth: .infinity, alignment: .leading)
             
-            Text("Alt")
-                .frame(width: 70, alignment: .trailing)
+            // Novas colunas de Câmera/IA
+            Text("Cena / Cam")
+                .frame(width: 80, alignment: .center)
             
-            Text("Vel (2D)")
-                .frame(width: 80, alignment: .trailing)
+            Text("Alt")
+                .frame(width: 60, alignment: .trailing)
+            
+            Text("Vel")
+                .frame(width: 70, alignment: .trailing)
             
             Text("G-Force")
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: 60, alignment: .trailing)
         }
         .font(Theme.Font.label)
         .foregroundColor(Theme.secondary)
@@ -127,7 +134,7 @@ struct DataView: View {
                         .padding(.horizontal, Theme.padding)
                         .padding(.vertical, 6)
                         .background(
-                            // Alternância de cor zebrada (opcional, mas ajuda a leitura)
+                            // Zebrado para facilitar leitura
                             point.id.hashValue % 2 == 0 ? Theme.surface.opacity(0.3) : Color.clear
                         )
                     
@@ -135,7 +142,7 @@ struct DataView: View {
                 }
                 
                 // Botão "Carregar Mais"
-                if limit < (searchText.isEmpty ? data.count : Int.max) {
+                if limit < (searchText.isEmpty ? data.count : filteredData.count) {
                     loadMoreButton
                 }
             }
@@ -167,43 +174,77 @@ struct DataRow: View {
     
     var body: some View {
         HStack(spacing: Theme.Spacing.small) {
-            // Tempo
+            // 1. Tempo
             Text(point.formattedTime)
                 .font(Theme.Font.mono)
                 .foregroundColor(Theme.primary)
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
             
-            // Lat/Lon
-            Text(String(format: "%.5f, %.5f", point.latitude, point.longitude))
-                .font(Theme.Font.mono)
-                .foregroundColor(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(1)
+            // 2. Coordenadas (GPS)
+            if let lat = point.latitude, let lon = point.longitude {
+                Text(String(format: "%.5f, %.5f", lat, lon))
+                    .font(Theme.Font.mono)
+                    .scaleEffect(0.9) // Leve redução para caber
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1)
+            } else {
+                Text("---")
+                    .font(Theme.Font.mono)
+                    .foregroundColor(Theme.secondary.opacity(0.3))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             
-            // Altitude
-            Text(point.formattedAltitude)
-                .font(Theme.Font.mono)
-                .foregroundColor(.secondary)
-                .frame(width: 70, alignment: .trailing)
+            // 3. Dados Extras (Cena / ISO) - NOVO
+            VStack(alignment: .center, spacing: 2) {
+                if let scene = point.scene {
+                    Text(scene)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.purple.opacity(0.2))
+                        .foregroundColor(.purple)
+                        .cornerRadius(3)
+                }
+                
+                if let iso = point.iso {
+                    Text("ISO \(Int(iso))")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(width: 80, alignment: .center)
             
-            // Velocidade
+            // 4. Altitude
+            if let alt = point.altitude {
+                Text(String(format: "%.0f", alt))
+                    .font(Theme.Font.mono)
+                    .foregroundColor(Theme.secondary)
+                    .frame(width: 60, alignment: .trailing)
+            } else {
+                Text("-")
+                    .frame(width: 60, alignment: .trailing)
+                    .foregroundColor(Theme.secondary.opacity(0.3))
+            }
+            
+            // 5. Velocidade
             Text(point.formattedSpeed)
                 .font(Theme.Font.mono)
                 .fontWeight(.medium)
                 .foregroundColor(Theme.Data.color(for: .gps))
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: 70, alignment: .trailing)
             
-            // Aceleração (Magnitude)
+            // 6. G-Force
             if let acc = point.acceleration {
-                Text(String(format: "%.1f G", acc.magnitude))
+                Text(String(format: "%.1f", acc.magnitude))
                     .font(Theme.Font.mono)
                     .foregroundColor(acc.magnitude > 1.5 ? Theme.warning : Theme.secondary)
-                    .frame(width: 70, alignment: .trailing)
+                    .frame(width: 60, alignment: .trailing)
             } else {
                 Text("-")
                     .font(Theme.Font.mono)
                     .foregroundColor(Theme.secondary.opacity(0.3))
-                    .frame(width: 70, alignment: .trailing)
+                    .frame(width: 60, alignment: .trailing)
             }
         }
         .font(.system(size: 13)) // Tamanho base para densidade de dados
@@ -214,9 +255,26 @@ struct DataRow: View {
 
 #Preview {
     DataView(data: [
-        TelemetryData(timestamp: 0.0, latitude: -25.4284, longitude: -49.2733, altitude: 930, speed2D: 0, speed3D: 0, acceleration: nil, gyro: nil),
-        TelemetryData(timestamp: 1.0, latitude: -25.4285, longitude: -49.2734, altitude: 931, speed2D: 5.5, speed3D: 5.6, acceleration: Vector3(x: 0, y: 0, z: 1.2), gyro: nil),
-        TelemetryData(timestamp: 2.0, latitude: -25.4286, longitude: -49.2735, altitude: 932, speed2D: 12.0, speed3D: 12.1, acceleration: Vector3(x: 0.5, y: 0.2, z: 0.9), gyro: nil)
+        TelemetryData(
+            timestamp: 0.0,
+            latitude: -25.4284, longitude: -49.2733, altitude: 930,
+            speed2D: 0, speed3D: 0,
+            acceleration: Vector3(x: 0, y: 0, z: 1.0),
+            gravity: nil, gyro: nil, cameraOrientation: nil, imageOrientation: nil,
+            iso: 100, shutterSpeed: 0.01, whiteBalance: 5500, whiteBalanceRGB: nil,
+            temperature: 35, audioDiagnostic: nil, faces: nil,
+            scene: "SNOW"
+        ),
+        TelemetryData(
+            timestamp: 1.0,
+            latitude: -25.4285, longitude: -49.2734, altitude: 931,
+            speed2D: 15.5, speed3D: 0,
+            acceleration: Vector3(x: 0.5, y: 0.2, z: 1.2),
+            gravity: nil, gyro: nil, cameraOrientation: nil, imageOrientation: nil,
+            iso: 200, shutterSpeed: 0.005, whiteBalance: 5500, whiteBalanceRGB: nil,
+            temperature: 36, audioDiagnostic: nil, faces: nil,
+            scene: nil
+        )
     ])
-    .frame(width: 800, height: 500)
+    .frame(width: 900, height: 500)
 }

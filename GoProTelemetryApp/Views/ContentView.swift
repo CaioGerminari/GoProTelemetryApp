@@ -28,7 +28,7 @@ struct ContentView: View {
             }
         }
         // Configurações da Janela
-        .frame(minWidth: 1000, minHeight: 700)
+        .frame(minWidth: 1000, minHeight: 900)
         .background(Theme.background)
         .alert("Ocorreu um erro", isPresented: $viewModel.showError) {
             Button("OK", role: .cancel) { }

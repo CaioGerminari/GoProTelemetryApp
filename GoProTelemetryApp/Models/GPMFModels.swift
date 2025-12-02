@@ -8,7 +8,6 @@
 import Foundation
 
 // MARK: - Errors
-
 enum GPMFError: Error {
     case invalidData
     case parsingFailed
@@ -18,8 +17,6 @@ enum GPMFError: Error {
 }
 
 // MARK: - Raw Data Structures (DTOs)
-
-/// Representa um stream completo extraído do C (Ex: Todos os dados de GPS)
 struct GPMFStream {
     let type: GPMFStreamType
     let samples: [GPMFSample]
@@ -28,15 +25,12 @@ struct GPMFStream {
     let sampleRate: Double
 }
 
-/// Representa um único ponto de amostra (Ex: Uma coordenada latitude/longitude/altitude)
 struct GPMFSample {
     let timestamp: Double
     let values: [Double]
 }
 
-// MARK: - Metadata & Info Wrappers
-
-/// Resumo informativo sobre um stream (Para exibir na lista de "Dados Brutos")
+// MARK: - Metadata
 struct GPMFStreamInfo: Identifiable {
     let id = UUID()
     let type: TelemetryType
@@ -52,7 +46,7 @@ struct GPMFStreamInfo: Identifiable {
     }
 }
 
-/// Metadados básicos do arquivo de vídeo
+// MARK: - Video Info
 struct VideoInfo {
     let duration: TimeInterval
     let creationDate: Date?
@@ -74,33 +68,48 @@ enum TelemetryType: String, CaseIterable, Codable {
     case gps = "GPS"
     case accelerometer = "Acelerômetro"
     case gyroscope = "Giroscópio"
-    case temperature = "Temperatura"
+    case gravity = "Gravidade"
+    case temperature = "Temperatura"    // Adicionado de volta
     case orientation = "Orientação"
-    case camera = "Câmera"
+    case camera = "Câmera"              // Renomeado de cameraSettings
+    case environment = "Ambiente (IA)"  // Rosto, Cena
+    case audio = "Áudio"
     case unknown = "Outros"
 }
 
-/// Tipos de FourCC (Códigos de 4 caracteres da GoPro) - Baixo Nível
+/// Tipos de FourCC (Códigos técnicos)
 enum GPMFStreamType: String {
-    // Sensores Principais
-    case gps5 = "GPS5" // GPS (Lat, Lon, Alt, 2D Speed, 3D Speed)
-    case gps9 = "GPS9" // GPS Hero 11+ (Mais precisão)
-    case accl = "ACCL" // Acelerômetro
-    case gyro = "GYRO" // Giroscópio
+    // Principais
+    case gps5 = "GPS5"
+    case gps9 = "GPS9"
+    case accl = "ACCL"
+    case gyro = "GYRO"
     
-    // Sensores Secundários
-    case temp = "TMPC" // Temperatura
-    case grav = "GRAV" // Vetor de Gravidade
-    case cori = "CORI" // Orientação da Câmera
-    case iori = "IORI" // Orientação da Imagem
-    case iso  = "ISO"  // ISO da Câmera
-    case shutter = "SHUT" // Velocidade do Obturador
+    // Secundários
+    case grav = "GRAV"
+    case temp = "TMPC"
+    case cori = "CORI"
+    case iori = "IORI"
+    
+    // Câmera
+    case iso  = "ISO"
+    case shut = "SHUT"
+    case wbal = "WBAL"
+    
+    // IA
+    case face = "FACE"
+    case scen = "SCEN"
+    
+    // Áudio
+    case wndm = "WNDM"
+    case mwet = "MWET"
+    
+    // Metadata Global
+    case devNm = "DVNM"
     
     case unknown = "UNKN"
     
-    /// Converte string crua do C para Enum
     static func from(fourCC: String) -> GPMFStreamType {
-        // Limpa espaços extras e nulos que podem vir do C
         let clean = fourCC.trimmingCharacters(in: .whitespacesAndNewlines)
                           .replacingOccurrences(of: "\0", with: "")
                           .uppercased()
@@ -108,15 +117,17 @@ enum GPMFStreamType: String {
         return GPMFStreamType(rawValue: clean) ?? .unknown
     }
     
-    /// Mapeia o código técnico para o tipo legível
     func toTelemetryType() -> TelemetryType {
         switch self {
         case .gps5, .gps9: return .gps
         case .accl: return .accelerometer
         case .gyro: return .gyroscope
-        case .temp: return .temperature
-        case .grav, .cori, .iori: return .orientation
-        case .iso, .shutter: return .camera
+        case .grav: return .gravity
+        case .temp: return .temperature     // Mapeado corretamente agora
+        case .cori, .iori: return .orientation
+        case .iso, .shut, .wbal: return .camera // Mapeado para .camera
+        case .face, .scen: return .environment
+        case .wndm, .mwet: return .audio
         default: return .unknown
         }
     }

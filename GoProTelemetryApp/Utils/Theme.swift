@@ -25,7 +25,7 @@ struct Theme {
     static let warning = Color.orange
     static let error = Color.red
     
-    // MARK: - Sensor Styling
+    // MARK: - Sensor Styling (CORREÇÃO AQUI)
     
     struct Data {
         static func color(for type: TelemetryType) -> Color {
@@ -33,9 +33,12 @@ struct Theme {
             case .gps: return .blue
             case .accelerometer: return .orange
             case .gyroscope: return .purple
-            case .temperature: return .red
-            case .orientation: return .pink
-            case .camera: return .teal
+            case .gravity: return .pink           // Novo
+            case .orientation: return .indigo     // Novo
+            case .temperature: return .red        // Novo
+            case .camera: return .teal    // Renomeado de 'camera'
+            case .environment: return .green      // Novo (Rosto/Cena)
+            case .audio: return .yellow           // Novo
             case .unknown: return .gray
             }
         }
@@ -45,9 +48,12 @@ struct Theme {
             case .gps: return "location.fill"
             case .accelerometer: return "gauge.with.dots.needle.bottom.50percent"
             case .gyroscope: return "gyroscope"
-            case .temperature: return "thermometer"
+            case .gravity: return "arrow.down.to.line"
             case .orientation: return "safari.fill"
+            case .temperature: return "thermometer"
             case .camera: return "camera.aperture"
+            case .environment: return "tree.fill"
+            case .audio: return "waveform"
             case .unknown: return "questionmark.square.dashed"
             }
         }
@@ -125,16 +131,14 @@ extension View {
     }
 }
 
-// MARK: - AppTheme UI Extension (CORREÇÃO)
-// Isso resolve o erro no GoProTelemetryApp.swift
+// MARK: - AppTheme UI Extension
 
 extension AppTheme {
-    /// Mapeia o tema do AppSettings para o ColorScheme do SwiftUI
     var systemColorScheme: ColorScheme? {
         switch self {
         case .dark: return .dark
         case .light: return .light
-        case .auto: return nil // nil usa o padrão do sistema
+        case .auto: return nil
         }
     }
 }

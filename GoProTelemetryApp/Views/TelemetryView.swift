@@ -47,6 +47,10 @@ struct TelemetryView: View {
                                 if let date = session?.creationDate {
                                     InfoBadge(text: date.shortDate, color: .secondary, icon: "calendar")
                                 }
+                                // Badge do Modelo da Câmera
+                                if let model = session?.cameraModel {
+                                    InfoBadge(text: model, color: .purple, icon: "camera")
+                                }
                             }
                         }
                         
@@ -98,12 +102,22 @@ struct TelemetryView: View {
                         color: .teal
                     )
                     
-                    // Força G Máxima (se houver)
+                    // Força G Máxima
                     if stats.maxGForce > 0 {
                         StatCard(
                             title: "Força G Máx",
                             value: String(format: "%.1f G", stats.maxGForce),
                             icon: "waveform.path.ecg",
+                            color: .red
+                        )
+                    }
+                    
+                    // Temperatura Máxima
+                    if stats.maxTemperature > 0 {
+                        StatCard(
+                            title: "Temp. Máx",
+                            value: String(format: "%.0f°C", stats.maxTemperature),
+                            icon: "thermometer.sun.fill",
                             color: .red
                         )
                     }
@@ -141,35 +155,59 @@ struct TelemetryView: View {
     }
 }
 
-// MARK: - Preview
+// MARK: - Preview Helper & Implementation
+
+// Extensão auxiliar para isolar a criação de dados mockados
+// Isso resolve o erro "Ambiguous expression" no #Preview
+extension TelemetryViewModel {
+    static var preview: TelemetryViewModel {
+        let vm = TelemetryViewModel()
+        
+        let points = [
+            TelemetryData(
+                timestamp: 0, latitude: -25.42, longitude: -49.27, altitude: 900, speed2D: 10, speed3D: 10,
+                acceleration: Vector3(x: 0, y: 0, z: 1), gravity: nil, gyro: nil,
+                cameraOrientation: nil, imageOrientation: nil,
+                iso: 100, shutterSpeed: 0.01, whiteBalance: 5500, whiteBalanceRGB: nil,
+                temperature: 30, audioDiagnostic: nil, faces: nil, scene: "URBAN"
+            ),
+            TelemetryData(
+                timestamp: 10, latitude: -25.43, longitude: -49.28, altitude: 910, speed2D: 15, speed3D: 15,
+                acceleration: Vector3(x: 0, y: 0, z: 1), gravity: nil, gyro: nil,
+                cameraOrientation: nil, imageOrientation: nil,
+                iso: 200, shutterSpeed: 0.02, whiteBalance: 5500, whiteBalanceRGB: nil,
+                temperature: 32, audioDiagnostic: nil, faces: nil, scene: "URBAN"
+            )
+        ]
+        
+        let stats = TelemetryStatistics(
+            duration: 120.5,
+            totalDistance: 1540,
+            maxSpeed: 22.5,
+            avgSpeed: 12.0,
+            maxAltitude: 950,
+            minAltitude: 900,
+            maxGForce: 1.2,
+            cameraName: "GoPro Hero 11 Black",
+            detectedScenes: ["URBAN"],
+            audioIssuesCount: 0,
+            maxTemperature: 45.0
+        )
+        
+        let session = TelemetrySession(
+            videoUrl: URL(fileURLWithPath: "/Videos/GoPro/GX0100.MP4"),
+            creationDate: Date(),
+            cameraModel: "GoPro Hero 11 Black",
+            dataPoints: points,
+            statistics: stats
+        )
+        
+        vm.session = session
+        return vm
+    }
+}
 
 #Preview {
-    // Mock Data para Preview
-    let points = [
-        TelemetryData(timestamp: 0, latitude: -25.42, longitude: -49.27, altitude: 900, speed2D: 10, speed3D: 10, acceleration: Vector3(x: 0, y: 0, z: 1), gyro: nil),
-        TelemetryData(timestamp: 10, latitude: -25.43, longitude: -49.28, altitude: 910, speed2D: 15, speed3D: 15, acceleration: Vector3(x: 0, y: 0, z: 1), gyro: nil)
-    ]
-    
-    let stats = TelemetryStatistics(
-        duration: 120.5,
-        totalDistance: 1540,
-        maxSpeed: 22.5, // ~81 km/h
-        avgSpeed: 12.0,
-        maxAltitude: 950,
-        minAltitude: 900,
-        maxGForce: 1.2
-    )
-    
-    let session = TelemetrySession(
-        videoUrl: URL(fileURLWithPath: "/Videos/GoPro/GX0100.MP4"),
-        creationDate: Date(),
-        dataPoints: points,
-        statistics: stats
-    )
-    
-    let vm = TelemetryViewModel()
-    vm.session = session
-    
-    return TelemetryView(viewModel: vm)
+    TelemetryView(viewModel: TelemetryViewModel.preview)
         .frame(width: 900, height: 700)
 }

@@ -12,40 +12,29 @@ class GPMFTelemetryMapper {
     
     // MARK: - Public API
     
-    /// Processa os streams brutos e retorna uma sessão completa pronta para uso.
-    static func makeSession(from streams: [GPMFStream], videoUrl: URL) -> TelemetrySession {
-        print("🔄 Iniciando mapeamento de telemetria...")
+    static func makeSession(from streams: [GPMFStream], videoUrl: URL, metadata: VideoMetadata, deviceName: String?) -> TelemetrySession {
+        print("🔄 Mapeando sensores avançados (IA, Áudio, Cine)...")
         
-        // 1. Identificar Streams
-        let gpsStream = streams.first { $0.type == .gps5 || $0.type == .gps9 }
-        let acclStream = streams.first { $0.type == .accl }
-        let gyroStream = streams.first { $0.type == .gyro }
-        
-        guard let primaryGPS = gpsStream else {
-            print("❌ Erro: Nenhum stream de GPS encontrado.")
-            return TelemetrySession(
-                videoUrl: videoUrl,
-                creationDate: Date(),
-                dataPoints: [],
-                statistics: .empty
-            )
+        guard let masterStream = findMasterStream(in: streams) else {
+            print("❌ Erro: Nenhum stream mestre encontrado.")
+            return TelemetrySession(videoUrl: videoUrl, creationDate: metadata.creationDate, cameraModel: deviceName, dataPoints: [], statistics: .empty)
         }
         
-        // 2. Processamento e Sincronização
-        let dataPoints = processDataPoints(
-            gps: primaryGPS,
-            accl: acclStream,
-            gyro: gyroStream
+        // Mapeamento rápido dos streams
+        let sensorMap = Dictionary(grouping: streams, by: { $0.type }).mapValues { $0.first! }
+        
+        let dataPoints = processTimeline(master: masterStream, sensors: sensorMap)
+        
+        let statistics = calculateStatistics(
+            points: dataPoints,
+            videoDuration: metadata.duration,
+            cameraName: deviceName ?? "GoPro Desconhecida"
         )
-        
-        // 3. Gerar Estatísticas
-        let statistics = calculateStatistics(points: dataPoints)
-        
-        print("✅ Sessão criada com \(dataPoints.count) pontos.")
         
         return TelemetrySession(
             videoUrl: videoUrl,
-            creationDate: Date(), // Idealmente extraído dos metadados do vídeo
+            creationDate: metadata.creationDate,
+            cameraModel: deviceName,
             dataPoints: dataPoints,
             statistics: statistics
         )
@@ -53,158 +42,255 @@ class GPMFTelemetryMapper {
     
     // MARK: - Core Processing
     
-    /// Sincroniza dados de diferentes sensores usando o GPS como linha do tempo mestre.
-    private static func processDataPoints(gps: GPMFStream, accl: GPMFStream?, gyro: GPMFStream?) -> [TelemetryData] {
+    private static func findMasterStream(in streams: [GPMFStream]) -> GPMFStream? {
+        let priorityOrder: [GPMFStreamType] = [.accl, .gyro, .gps9, .gps5]
+        return priorityOrder.compactMap { type in streams.first(where: { $0.type == type }) }.first ?? streams.first
+    }
+    
+    private static func processTimeline(master: GPMFStream, sensors: [GPMFStreamType: GPMFStream]) -> [TelemetryData] {
         var points: [TelemetryData] = []
+        points.reserveCapacity(master.samples.count)
+        
+        // --- Estado Acumulado (Sample-and-Hold) ---
+        var lastGPS: (lat: Double, lon: Double, alt: Double, s2d: Double, s3d: Double)?
+        var lastISO: Double?
+        var lastShutter: Double?
+        var lastWBAL: Double?
+        var lastTemp: Double?
+        var lastScene: String?
+        var lastFaces: [DetectedFace]?
+        
         var totalDistance: Double = 0.0
-        var previousCoordinate: CLLocationCoordinate2D?
+        var previousCoord: CLLocationCoordinate2D?
         
-        // Otimização: Índices para busca rápida (evita percorrer o array inteiro a cada ponto)
-        var acclIndex = 0
-        var gyroIndex = 0
+        // Índices para busca otimizada
+        var indices: [GPMFStreamType: Int] = [:]
         
-        for sample in gps.samples {
-            // 1. Parse GPS
-            guard let gpsData = parseGPS(sample, type: gps.type) else { continue }
+        for sample in master.samples {
+            let time = sample.timestamp
             
-            // Filtro básico de qualidade (ignora lat/lon 0.0 que é "buscando sinal")
-            if gpsData.latitude == 0 && gpsData.longitude == 0 { continue }
-            
-            // 2. Calcular Distância Acumulada
-            let currentCoord = CLLocationCoordinate2D(latitude: gpsData.latitude, longitude: gpsData.longitude)
-            if let prev = previousCoordinate {
-                let dist = prev.distance(to: currentCoord)
-                // Filtro de ruído: Se moveu menos de 50cm em 0.05s (aprox), pode ser jitter do GPS parado
-                if dist > 0.5 {
-                    totalDistance += dist
-                }
-            }
-            previousCoordinate = currentCoord
-            
-            // 3. Sincronizar Sensores (Encontrar amostra mais próxima no tempo)
-            // Acelerômetro
-            var acceleration: Vector3?
-            if let stream = accl {
-                if let (val, newIndex) = findNearestSample(targetTime: sample.timestamp, stream: stream, startIndex: acclIndex) {
-                    acceleration = Vector3(x: val[0], y: val[1], z: val[2])
-                    acclIndex = newIndex
-                }
+            // 1. Alta Frequência (IMU)
+            var accel: Vector3?
+            if let stream = sensors[.accl], let vals = findNearest(time: time, stream: stream, indices: &indices) {
+                accel = Vector3(x: vals[0], y: vals[1], z: vals[2])
+            } else if master.type == .accl { // Se o mestre for ACCL, usa os dados dele
+                accel = Vector3(x: sample.values[0], y: sample.values[1], z: sample.values[2])
             }
             
-            // Giroscópio
-            var gyroscope: Vector3?
-            if let stream = gyro {
-                if let (val, newIndex) = findNearestSample(targetTime: sample.timestamp, stream: stream, startIndex: gyroIndex) {
-                    gyroscope = Vector3(x: val[0], y: val[1], z: val[2])
-                    gyroIndex = newIndex
-                }
+            var gyro: Vector3?
+            if let stream = sensors[.gyro], let vals = findNearest(time: time, stream: stream, indices: &indices) {
+                gyro = Vector3(x: vals[0], y: vals[1], z: vals[2])
             }
             
-            // 4. Criar Objeto Final
-            let point = TelemetryData(
-                timestamp: sample.timestamp,
-                latitude: gpsData.latitude,
-                longitude: gpsData.longitude,
-                altitude: gpsData.altitude,
-                speed2D: gpsData.speed2D,
-                speed3D: gpsData.speed3D,
-                acceleration: acceleration,
-                gyro: gyroscope,
-                distanceAccumulated: totalDistance
+            var gravity: Vector3?
+            if let stream = sensors[.grav], let vals = findNearest(time: time, stream: stream, indices: &indices) {
+                gravity = Vector3(x: vals[0], y: vals[1], z: vals[2])
+            }
+            
+            // 2. GPS
+            var currentGPS = lastGPS
+            let gpsStream = sensors[.gps9] ?? sensors[.gps5]
+            if let stream = gpsStream, let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 0.2) {
+                if let parsed = parseGPS(vals, type: stream.type), abs(parsed.lat) > 0.001 {
+                    currentGPS = parsed
+                    lastGPS = parsed
+                }
+            } else {
+                currentGPS = nil // GPS caiu
+            }
+            
+            // Distância
+            if let gps = currentGPS {
+                let coord = CLLocationCoordinate2D(latitude: gps.lat, longitude: gps.lon)
+                if let prev = previousCoord {
+                    let dist = prev.distance(to: coord)
+                    if dist > 0.05 && dist < 100 { totalDistance += dist }
+                }
+                previousCoord = coord
+            }
+            
+            // 3. Dados Lentos (Sample-and-Hold)
+            
+            // Temperatura
+            if let stream = sensors[.temp], let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 2.0) {
+                lastTemp = vals[0]
+            }
+            
+            // Câmera (ISO/Shut/WBAL)
+            if let stream = sensors[.iso], let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 1.0) {
+                lastISO = vals[0]
+            }
+            if let stream = sensors[.shut], let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 1.0) {
+                lastShutter = vals[0]
+            }
+            if let stream = sensors[.wbal], let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 1.0) {
+                lastWBAL = vals[0]
+            }
+            
+            // 4. Inteligência (Cena e Rosto)
+            
+            // Cenas (SCEN): Decodificar FourCC do Double
+            if let stream = sensors[.scen], let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 2.0) {
+                // vals[0] é o FourCC (ex: 'SNOW' como double), vals[1] é probabilidade
+                lastScene = decodeFourCC(vals[0])
+            }
+            
+            // Rostos (FACE): Decodificar Bounding Boxes
+            if let stream = sensors[.face], let vals = findNearest(time: time, stream: stream, indices: &indices, tolerance: 0.5) {
+                // Estrutura típica: [ID, x, y, w, h] ou apenas [x, y, w, h] dependendo da versão
+                // Assumindo blocks de 5 valores se elementsPerSample for 5
+                if vals.count >= 4 {
+                    lastFaces = parseFaces(vals, elements: stream.elementsPerSample)
+                }
+            } else {
+                lastFaces = nil // Rostos não persistem se pararem de ser detectados
+            }
+            
+            // 5. Diagnóstico de Áudio
+            var audioDiag: AudioDiagnostic?
+            if let stream = sensors[.wndm], let vals = findNearest(time: time, stream: stream, indices: &indices) {
+                // WNDM: [enabled, level 0-100?]
+                let level = vals.count > 1 ? vals[1] : vals[0]
+                audioDiag = AudioDiagnostic(windNoiseLevel: level > 1 ? level/100.0 : level, isWet: false)
+            }
+            
+            // Montagem
+            var point = TelemetryData(
+                timestamp: time,
+                latitude: currentGPS?.lat,
+                longitude: currentGPS?.lon,
+                altitude: currentGPS?.alt,
+                speed2D: currentGPS?.s2d,
+                speed3D: currentGPS?.s3d,
+                acceleration: accel,
+                gravity: gravity,
+                gyro: gyro,
+                iso: lastISO,
+                shutterSpeed: lastShutter,
+                whiteBalance: lastWBAL,
+                temperature: lastTemp,
+                audioDiagnostic: audioDiag,
+                faces: lastFaces,
+                scene: lastScene
             )
-            
+            point.distanceAccumulated = totalDistance
             points.append(point)
         }
         
         return points
     }
     
-    // MARK: - Helpers & Parsers
+    // MARK: - Decoders
     
-    /// Extrai dados específicos dependendo da versão do GPS (Hero 5-10 vs Hero 11+)
-    private static func parseGPS(_ sample: GPMFSample, type: GPMFStreamType) -> (latitude: Double, longitude: Double, altitude: Double, speed2D: Double, speed3D: Double)? {
-        let v = sample.values
+    /// Converte um Double que representa um FourCC (ex: 'SNOW') de volta para String
+    private static func decodeFourCC(_ value: Double) -> String {
+        // GoPro armazena 'SNOW' como um inteiro de 32 bits interpretado como float/double
+        let intVal = UInt32(value)
         
-        if type == .gps5 {
-            // GPS5: lat, lon, alt, speed2d, speed3d
-            guard v.count >= 5 else { return nil }
-            return (v[0], v[1], v[2], v[3], v[4])
-        } else if type == .gps9 {
-            // GPS9: lat, lon, alt, speed2d, speed3d, days, secs, dop, fix
-            guard v.count >= 5 else { return nil }
-            return (v[0], v[1], v[2], v[3], v[4])
-        }
+        // Extrai bytes (Big Endian)
+        let bytes = [
+            UInt8((intVal >> 24) & 0xFF),
+            UInt8((intVal >> 16) & 0xFF),
+            UInt8((intVal >> 8) & 0xFF),
+            UInt8(intVal & 0xFF)
+        ]
         
-        return nil
+        // Filtra caracteres imprimíveis válidos (ASCII)
+        let validBytes = bytes.filter { $0 >= 32 && $0 <= 126 }
+        return String(bytes: validBytes, encoding: .ascii) ?? "?"
     }
     
-    /// Algoritmo eficiente para encontrar a amostra de sensor mais próxima do timestamp do GPS.
-    /// Retorna: (Valores, Novo Índice Otimizado)
-    private static func findNearestSample(targetTime: Double, stream: GPMFStream, startIndex: Int) -> ([Double], Int)? {
+    /// Parse de múltiplos rostos (se houver mais de um no mesmo sample)
+    private static func parseFaces(_ values: [Double], elements: Int) -> [DetectedFace] {
+        var faces: [DetectedFace] = []
+        let step = max(1, elements) // Evita divisão por zero
+        
+        // Itera sobre os blocos de dados (cada rosto é um bloco)
+        for i in stride(from: 0, to: values.count, by: step) {
+            let end = min(i + step, values.count)
+            let faceData = Array(values[i..<end])
+            
+            if faceData.count >= 4 {
+                // Tenta identificar o formato. Geralmente ID é o primeiro se tiver 5
+                let id = faceData.count >= 5 ? Int(faceData[0]) : 0
+                let x = faceData.count >= 5 ? faceData[1] : faceData[0]
+                let y = faceData.count >= 5 ? faceData[2] : faceData[1]
+                let w = faceData.count >= 5 ? faceData[3] : faceData[2]
+                let h = faceData.count >= 5 ? faceData[4] : faceData[3]
+                
+                faces.append(DetectedFace(id: id, x: x, y: y, w: w, h: h))
+            }
+        }
+        return faces
+    }
+    
+    // MARK: - Helpers Padrão (FindNearest, ParseGPS...)
+    
+    private static func findNearest(time: Double, stream: GPMFStream, indices: inout [GPMFStreamType: Int], tolerance: Double = 0.05) -> [Double]? {
+        let startIndex = indices[stream.type] ?? 0
         let samples = stream.samples
         guard startIndex < samples.count else { return nil }
         
         var bestIndex = startIndex
-        var minDiff = abs(samples[startIndex].timestamp - targetTime)
+        var minDiff = abs(samples[startIndex].timestamp - time)
         
-        // Procura para frente a partir do último índice conhecido
-        for i in startIndex..<samples.count {
-            let diff = abs(samples[i].timestamp - targetTime)
-            
+        let maxSearch = min(startIndex + 500, samples.count)
+        for i in startIndex..<maxSearch {
+            let diff = abs(samples[i].timestamp - time)
             if diff < minDiff {
                 minDiff = diff
                 bestIndex = i
             } else if diff > minDiff {
-                // Se a diferença começou a aumentar, já passamos do ponto ideal (os arrays são ordenados por tempo)
-                // Podemos parar de procurar.
                 break
             }
         }
-        
-        // Verifica se a amostra encontrada é válida (dentro de uma janela de 0.2s)
-        // Se estiver muito longe, o sensor pode ter parado de gravar ou o vídeo pulou.
-        if minDiff > 0.2 { return nil }
-        
-        return (samples[bestIndex].values, bestIndex)
+        indices[stream.type] = bestIndex
+        if minDiff > tolerance { return nil }
+        return samples[bestIndex].values
     }
     
-    // MARK: - Statistics Calculation
+    private static func parseGPS(_ values: [Double], type: GPMFStreamType) -> (lat: Double, lon: Double, alt: Double, s2d: Double, s3d: Double)? {
+        guard values.count >= 5 else { return nil }
+        return (values[0], values[1], values[2], values[3], values[4])
+    }
     
-    private static func calculateStatistics(points: [TelemetryData]) -> TelemetryStatistics {
-        guard !points.isEmpty else { return .empty }
+    // MARK: - Statistics
+    
+    private static func calculateStatistics(points: [TelemetryData], videoDuration: Double, cameraName: String) -> TelemetryStatistics {
+        let validSpeeds = points.compactMap { $0.speed2D }.filter { $0 < 300 }
+        let maxSpeed = validSpeeds.max() ?? 0
+        let avgSpeed = validSpeeds.isEmpty ? 0 : validSpeeds.reduce(0, +) / Double(validSpeeds.count)
         
-        let duration = points.last?.timestamp ?? 0
-        let totalDistance = points.last?.distanceAccumulated ?? 0
-        
-        // Cálculos usando funções de alta ordem (map/reduce)
-        let maxSpeed = points.map { $0.speed2D }.max() ?? 0
-        let avgSpeed = points.map { $0.speed2D }.reduce(0, +) / Double(points.count)
-        
-        let altitudes = points.map { $0.altitude }
+        let altitudes = points.compactMap { $0.altitude }
         let maxAlt = altitudes.max() ?? 0
         let minAlt = altitudes.min() ?? 0
         
-        // Força G Máxima (Magnitude da aceleração)
-        // Normalizamos subtraindo 1G (9.8m/s²) da gravidade se necessário,
-        // mas GPMF geralmente entrega bruto. Vamos pegar o max magnitude.
         let maxG = points.compactMap { $0.acceleration?.magnitude }.max() ?? 0
+        let totalDistance = points.last?.distanceAccumulated ?? 0
+        
+        // Estatísticas Novas
+        let scenes = Set(points.compactMap { $0.scene }).sorted()
+        let maxTemp = points.compactMap { $0.temperature }.max() ?? 0
+        let audioIssues = points.filter { ($0.audioDiagnostic?.windNoiseLevel ?? 0) > 0.8 }.count
         
         return TelemetryStatistics(
-            duration: duration,
+            duration: max(videoDuration, points.last?.timestamp ?? 0),
             totalDistance: totalDistance,
             maxSpeed: maxSpeed,
             avgSpeed: avgSpeed,
             maxAltitude: maxAlt,
             minAltitude: minAlt,
-            maxGForce: maxG
+            maxGForce: maxG,
+            cameraName: cameraName,
+            detectedScenes: scenes,
+            audioIssuesCount: audioIssues,
+            maxTemperature: maxTemp
         )
     }
 }
 
-// MARK: - Extensions
-
+// Extension privada
 fileprivate extension CLLocationCoordinate2D {
-    /// Calcula distância em metros entre duas coordenadas (Haversine simplificado via CoreLocation)
     func distance(to other: CLLocationCoordinate2D) -> CLLocationDistance {
         let loc1 = CLLocation(latitude: self.latitude, longitude: self.longitude)
         let loc2 = CLLocation(latitude: other.latitude, longitude: other.longitude)

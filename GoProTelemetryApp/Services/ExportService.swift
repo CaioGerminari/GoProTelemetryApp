@@ -5,14 +5,6 @@
 //  Created by Caio Germinari on 30/11/25.
 //
 
-//
-//  ExportService.swift
-//  GoProTelemetryApp
-//
-//  Created by Caio Germinari on 30/11/25.
-//  Refatorado: Suporte granular a sensores (GPS, Accel, Gyro) e múltiplos formatos.
-//
-
 import Foundation
 import CoreLocation
 
@@ -36,21 +28,12 @@ enum ExportError: Error, LocalizedError {
 // MARK: - Service Logic
 class ExportService {
     
-    /// Gera um arquivo de exportação baseado na sessão e nas configurações.
-    /// - Parameters:
-    ///   - session: A sessão de telemetria contendo os dados.
-    ///   - settings: Configurações de exportação (quais sensores incluir).
-    ///   - sampleRate: Taxa de amostragem (ex: 1.0 = 100%, 0.5 = 50%).
-    /// - Returns: URL temporária do arquivo gerado.
     func export(session: TelemetrySession, settings: ExportSettings, sampleRate: Double) throws -> URL {
         guard !session.dataPoints.isEmpty else {
             throw ExportError.emptyData
         }
         
-        // 1. Filtragem de dados (Sample Rate)
         let processedData = applySampling(to: session.dataPoints, rate: sampleRate)
-        
-        // 2. Geração do conteúdo
         let fileContent: String
         
         switch settings.defaultFormat {
@@ -66,7 +49,6 @@ class ExportService {
             fileContent = try generateMGJSON(data: processedData, session: session, settings: settings)
         }
         
-        // 3. Criação do arquivo temporário
         return try createTemporaryFile(
             content: fileContent,
             settings: settings,
@@ -75,11 +57,8 @@ class ExportService {
         )
     }
     
-    // MARK: - Sampling Logic
-    
     private func applySampling(to data: [TelemetryData], rate: Double) -> [TelemetryData] {
         if rate >= 1.0 { return data }
-        
         let step = Int(1.0 / rate)
         guard step > 1 else { return data }
         
@@ -89,14 +68,10 @@ class ExportService {
         for index in stride(from: 0, to: data.count, by: step) {
             result.append(data[index])
         }
-        
         return result
     }
     
-    // MARK: - File Management
-    
     private func createTemporaryFile(content: String, settings: ExportSettings, originalName: String, creationDate: Date) throws -> URL {
-        // Processa o template de nome (ex: "{video}_{date}")
         let fileName = processFileName(
             template: settings.customFileNameTemplate,
             originalName: originalName,
@@ -128,7 +103,7 @@ class ExportService {
         if name.isEmpty { name = "{video}_{date}_{time}" }
         
         name = name.replacingOccurrences(of: "{video}", with: videoName)
-        name = name.replacingOccurrences(of: "{device}", with: "GoPro") // Fallback ou customizável
+        name = name.replacingOccurrences(of: "{device}", with: "GoPro")
         name = name.replacingOccurrences(of: "{date}", with: dateStr)
         name = name.replacingOccurrences(of: "{time}", with: timeStr)
         
@@ -140,7 +115,7 @@ class ExportService {
 
 extension ExportService {
     
-    // MARK: GPX Generator (Focado em GPS)
+    // MARK: GPX (Apenas GPS)
     private func generateGPX(data: [TelemetryData], session: TelemetrySession) -> String {
         var gpx = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -157,24 +132,37 @@ extension ExportService {
         let startDate = session.creationDate
         
         for point in data {
-            let pointDate = startDate.addingTimeInterval(point.timestamp)
-            
-            gpx += "\n      <trkpt lat=\"\(point.latitude)\" lon=\"\(point.longitude)\">"
-            gpx += "\n        <ele>\(point.altitude)</ele>"
-            gpx += "\n        <time>\(formatDateISO(pointDate))</time>"
-            
-            // Extensão para velocidade
-            gpx += "\n        <extensions><speed>\(point.speed2D)</speed></extensions>"
-            gpx += "\n      </trkpt>"
+            // GPX requer Lat/Lon. Se não tiver, pula o ponto.
+            if let lat = point.latitude, let lon = point.longitude {
+                let pointDate = startDate.addingTimeInterval(point.timestamp)
+                
+                gpx += "\n      <trkpt lat=\"\(lat)\" lon=\"\(lon)\">"
+                if let alt = point.altitude {
+                    gpx += "\n        <ele>\(alt)</ele>"
+                }
+                gpx += "\n        <time>\(formatDateISO(pointDate))</time>"
+                
+                if let speed = point.speed2D {
+                    gpx += "\n        <extensions><speed>\(speed)</speed></extensions>"
+                }
+                gpx += "\n      </trkpt>"
+            }
         }
         
         gpx += "\n    </trkseg>\n  </trk>\n</gpx>"
         return gpx
     }
     
-    // MARK: KML Generator (Focado em GPS)
+    // MARK: KML (Apenas GPS)
     private func generateKML(data: [TelemetryData], session: TelemetrySession) -> String {
-        let coordinatesString = data.map { "\($0.longitude),\($0.latitude),\($0.altitude)" }.joined(separator: " ")
+        // Filtra apenas pontos com coordenadas válidas
+        let validCoords = data.compactMap { point -> String? in
+            guard let lat = point.latitude, let lon = point.longitude else { return nil }
+            let alt = point.altitude ?? 0
+            return "\(lon),\(lat),\(alt)"
+        }
+        
+        let coordinatesString = validCoords.joined(separator: " ")
         
         return """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -205,9 +193,8 @@ extension ExportService {
         """
     }
     
-    // MARK: CSV Generator (Granular)
+    // MARK: CSV (Safely Unwrapped)
     private func generateCSV(data: [TelemetryData], settings: ExportSettings) -> String {
-        // 1. Construir Cabeçalho Dinâmico
         var header = "Time (s)"
         
         if settings.includeGPS {
@@ -224,16 +211,21 @@ extension ExportService {
         
         var csv = header + "\n"
         
-        // 2. Construir Linhas de Dados
         for point in data {
             var line = String(format: "%.3f", point.timestamp)
             
+            // GPS (Optional Check)
             if settings.includeGPS {
-                line += String(format: ",%.6f,%.6f,%.2f,%.2f,%.2f",
-                               point.latitude, point.longitude, point.altitude,
-                               point.speed2D, point.speed3D)
+                if let lat = point.latitude, let lon = point.longitude {
+                    line += String(format: ",%.6f,%.6f,%.2f,%.2f,%.2f",
+                                   lat, lon, point.altitude ?? 0,
+                                   point.speed2D ?? 0, point.speed3D ?? 0)
+                } else {
+                    line += ",,,,,"
+                }
             }
             
+            // Accel (Optional Check)
             if settings.includeAccelerometer {
                 if let acc = point.acceleration {
                     line += String(format: ",%.3f,%.3f,%.3f", acc.x, acc.y, acc.z)
@@ -242,6 +234,7 @@ extension ExportService {
                 }
             }
             
+            // Gyro (Optional Check)
             if settings.includeGyroscope {
                 if let gyro = point.gyro {
                     line += String(format: ",%.3f,%.3f,%.3f", gyro.x, gyro.y, gyro.z)
@@ -256,17 +249,19 @@ extension ExportService {
         return csv
     }
     
-    // MARK: JSON Generator (Granular)
+    // MARK: JSON (Safely Unwrapped)
     private func generateJSON(data: [TelemetryData], settings: ExportSettings) throws -> String {
         let mappedData = data.map { point -> [String: Any] in
             var dict: [String: Any] = ["time": point.timestamp]
             
             if settings.includeGPS {
-                dict["lat"] = point.latitude
-                dict["lon"] = point.longitude
-                dict["alt"] = point.altitude
-                dict["speed2d"] = point.speed2D
-                dict["speed3d"] = point.speed3D
+                if let lat = point.latitude, let lon = point.longitude {
+                    dict["lat"] = lat
+                    dict["lon"] = lon
+                    dict["alt"] = point.altitude ?? 0
+                    dict["speed2d"] = point.speed2D ?? 0
+                    dict["speed3d"] = point.speed3D ?? 0
+                }
             }
             
             if settings.includeAccelerometer, let acc = point.acceleration {
@@ -290,41 +285,45 @@ extension ExportService {
         return jsonString
     }
     
-    // MARK: MGJSON Generator (Complexo - After Effects)
+    // MARK: MGJSON (Safely Unwrapped)
     private func generateMGJSON(data: [TelemetryData], session: TelemetrySession, settings: ExportSettings) throws -> String {
         let startDate = session.creationDate
-        
-        // Estruturas do MGJSON
         var dynamicSamples: [[String: Any]] = []
         var dataOutline: [[String: Any]] = []
         
         // 1. GPS Stream
         if settings.includeGPS {
-            let samples = data.map { point -> [String: Any] in
+            // Filtra apenas pontos com GPS válido para o MGJSON
+            let samples = data.compactMap { point -> [String: Any]? in
+                guard let lat = point.latitude, let lon = point.longitude else { return nil }
                 let date = startDate.addingTimeInterval(point.timestamp)
+                let speed = (point.speed2D ?? 0) * 3.6
+                
                 return [
                     "time": formatDateISO(date),
-                    "value": [point.latitude, point.longitude, point.speed2D * 3.6] // Lat, Lon, Km/h
+                    "value": [lat, lon, speed]
                 ]
             }
             
-            dynamicSamples.append([
-                "sampleSetID": "gpsData",
-                "dataType": "numberArray",
-                "sampleCount": data.count,
-                "frameRate": 0,
-                "samples": samples
-            ])
-            
-            dataOutline.append([
-                "objectType": "dataDynamic",
-                "displayName": "GPS (Lat, Lon, Speed)",
-                "sampleSetID": "gpsData",
-                "dataType": "numberArray",
-                "matchName": "gpsData",
-                "interpolation": "linear",
-                "displayNameURI": "gps"
-            ])
+            if !samples.isEmpty {
+                dynamicSamples.append([
+                    "sampleSetID": "gpsData",
+                    "dataType": "numberArray",
+                    "sampleCount": samples.count,
+                    "frameRate": 0,
+                    "samples": samples
+                ])
+                
+                dataOutline.append([
+                    "objectType": "dataDynamic",
+                    "displayName": "GPS (Lat, Lon, Speed)",
+                    "sampleSetID": "gpsData",
+                    "dataType": "numberArray",
+                    "matchName": "gpsData",
+                    "interpolation": "linear",
+                    "displayNameURI": "gps"
+                ])
+            }
         }
         
         // 2. Accelerometer Stream
@@ -359,7 +358,7 @@ extension ExportService {
             }
         }
         
-        // Montagem Final do MGJSON
+        // Montagem Final
         let mgjson: [String: Any] = [
             "version": "MGJSON2.0.0",
             "creator": "GoProTelemetryApp",
