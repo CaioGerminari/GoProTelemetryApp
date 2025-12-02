@@ -13,201 +13,329 @@ struct TelemetryView: View {
     
     @ObservedObject var viewModel: TelemetryViewModel
     
-    // MARK: - Computed Properties (Helpers)
+    // MARK: - State (Player Virtual)
+    
+    // Índice do ponto de dados atual (para o Scrubber)
+    @State private var currentIndex: Int = 0
+    @State private var isPlaying: Bool = false
+    @State private var playbackTimer: Timer?
+    
+    // MARK: - Computed Properties
     
     private var session: TelemetrySession? { viewModel.session }
-    private var stats: TelemetryStatistics { session?.statistics ?? .empty }
     private var dataPoints: [TelemetryData] { session?.dataPoints ?? [] }
+    private var stats: TelemetryStatistics { session?.statistics ?? .empty }
+    
+    /// O ponto de dados selecionado no momento (Scrubber) ou o último (se nada selecionado)
+    private var currentPoint: TelemetryData? {
+        guard !dataPoints.isEmpty, dataPoints.indices.contains(currentIndex) else { return nil }
+        return dataPoints[currentIndex]
+    }
     
     // MARK: - Body
     
     var body: some View {
-        ScrollView {
-            VStack(spacing: Theme.Spacing.extraLarge) {
+        ZStack {
+            // 1. Fundo do App (Gradient Mesh Sutil)
+            // Simula o ambiente "Desktop" por trás do vidro
+            LinearGradient(
+                colors: [
+                    Theme.background,
+                    Theme.background.opacity(0.8),
+                    Theme.primary.opacity(0.05)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            ScrollView {
+                VStack(spacing: 24) {
+                    
+                    // 2. Header Flutuante
+                    headerSection
+                    
+                    // 3. HUD Principal (Mapa + Gauges)
+                    hudSection
+                    
+                    // 4. Controles de Reprodução (Timeline)
+                    playerControlsSection
+                    
+                    // 5. Painel de Câmera (Novo Componente)
+                    if let point = currentPoint {
+                        CameraStatusView(
+                            iso: point.iso,
+                            shutter: point.shutterSpeed,
+                            wb: point.whiteBalance,
+                            orientation: point.cameraOrientation
+                        )
+                    }
+                    
+                    // 6. Estatísticas Secundárias (Glass Cards)
+                    secondaryStatsGrid
+                    
+                    Spacer(minLength: 40)
+                }
+                .padding(24)
+            }
+        }
+        .onAppear {
+            // Inicia no começo ou fim
+            if currentIndex == 0 && !dataPoints.isEmpty {
+                currentIndex = 0
+            }
+        }
+        .onDisappear {
+            stopPlayback()
+        }
+    }
+    
+    // MARK: - Sections
+    
+    private var headerSection: some View {
+        GlassCard(depth: 0.5) {
+            HStack(spacing: 16) {
+                // Ícone do Arquivo
+                ZStack {
+                    Circle()
+                        .fill(Theme.primary.opacity(0.1))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "film.stack.fill")
+                        .font(.title2)
+                        .liquidNeon(color: Theme.primary)
+                }
                 
-                // 1. Cabeçalho do Vídeo
-                if let url = session?.videoUrl {
-                    HStack(spacing: Theme.Spacing.medium) {
-                        // Ícone do Arquivo
-                        Image(systemName: "film.fill")
-                            .font(.system(size: 40))
-                            .foregroundStyle(LinearGradient(colors: [.blue, .cyan], startPoint: .top, endPoint: .bottom))
-                            .frame(width: 60, height: 60)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(12)
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(url.lastPathComponent)
-                                .font(Theme.Font.title)
-                                .foregroundColor(Theme.primary)
-                            
-                            HStack {
-                                InfoBadge(text: url.formattedFileSize, color: .gray, icon: "externaldrive")
-                                InfoBadge(text: "\(dataPoints.count) pontos", color: .blue, icon: "chart.bar")
-                                if let date = session?.creationDate {
-                                    InfoBadge(text: date.shortDate, color: .secondary, icon: "calendar")
-                                }
-                                // Badge do Modelo da Câmera
-                                if let model = session?.cameraModel {
-                                    InfoBadge(text: model, color: .purple, icon: "camera")
-                                }
-                            }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session?.videoUrl.lastPathComponent ?? "Sem Vídeo")
+                        .font(Theme.Font.title)
+                        .foregroundStyle(.primary)
+                    
+                    HStack {
+                        if let model = session?.cameraModel {
+                            Label(model, systemImage: "camera.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        
-                        Spacer()
-                    }
-                    .padding(.bottom, Theme.Spacing.small)
-                }
-                
-                // 2. Grid de Estatísticas (Cards)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: Theme.Spacing.medium)], spacing: Theme.Spacing.medium) {
-                    
-                    // Tempo Total
-                    StatCard(
-                        title: "Duração",
-                        value: stats.duration.formattedTime,
-                        icon: "clock.fill",
-                        color: .blue
-                    )
-                    
-                    // Distância
-                    StatCard(
-                        title: "Distância Total",
-                        value: stats.totalDistance.asDistanceString,
-                        icon: "map.fill",
-                        color: .green
-                    )
-                    
-                    // Velocidade Máxima
-                    StatCard(
-                        title: "Velocidade Máx",
-                        value: stats.maxSpeed.asKmhString,
-                        icon: "speedometer",
-                        color: .orange
-                    )
-                    
-                    // Altitude Máxima
-                    StatCard(
-                        title: "Altitude Máx",
-                        value: stats.maxAltitude.asDistanceString,
-                        icon: "mountain.2.fill",
-                        color: .purple
-                    )
-                    
-                    // Média de Velocidade
-                    StatCard(
-                        title: "Velocidade Média",
-                        value: stats.avgSpeed.asKmhString,
-                        icon: "gauge.medium",
-                        color: .teal
-                    )
-                    
-                    // Força G Máxima
-                    if stats.maxGForce > 0 {
-                        StatCard(
-                            title: "Força G Máx",
-                            value: String(format: "%.1f G", stats.maxGForce),
-                            icon: "waveform.path.ecg",
-                            color: .red
-                        )
-                    }
-                    
-                    // Temperatura Máxima
-                    if stats.maxTemperature > 0 {
-                        StatCard(
-                            title: "Temp. Máx",
-                            value: String(format: "%.0f°C", stats.maxTemperature),
-                            icon: "thermometer.sun.fill",
-                            color: .red
-                        )
+                        Text("•")
+                            .foregroundStyle(.secondary)
+                        Text(session?.creationDate.shortDate ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 
-                // 3. Visão Geral do Mapa
-                if !dataPoints.isEmpty {
-                    VStack(alignment: .leading, spacing: Theme.Spacing.small) {
-                        SectionHeader("Trajeto Percorrido", icon: "map")
-                        
-                        // Reutiliza o MapView mas com altura fixa e sem controles complexos
-                        MapView(telemetryData: dataPoints)
-                            .frame(height: 350)
-                            .cornerRadius(Theme.cornerRadius)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Theme.cornerRadius)
-                                    .stroke(Theme.secondary.opacity(0.2), lineWidth: 1)
-                            )
-                            .shadow(color: Theme.shadowColor, radius: 4, x: 0, y: 2)
-                    }
-                } else {
-                    // Estado Vazio (Sem GPS)
-                    EmptyStateView(
-                        title: "Sem GPS",
-                        systemImage: "location.slash",
-                        description: "Não foi possível traçar o mapa para este vídeo."
+                Spacer()
+                
+                // Badge de Status
+                Text("\(dataPoints.count) SAMPLES")
+                    .font(.caption.bold().monospaced())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(.white.opacity(0.1), lineWidth: 1)
                     )
-                    .frame(height: 200)
-                    .cardStyle()
+            }
+        }
+    }
+    
+    private var hudSection: some View {
+        ZStack(alignment: .top) {
+            // Camada do Mapa (Fundo)
+            // Nota: O MapView original não suporta "currentPin" ainda,
+            // mas servirá como base visual para o trajeto.
+            MapView(telemetryData: dataPoints)
+                .frame(height: 380)
+                .cornerRadius(Theme.cornerRadius)
+                .overlay(
+                    // Borda de Vidro e Sombra Interna
+                    RoundedRectangle(cornerRadius: Theme.cornerRadius)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.3), .clear, .white.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: Theme.shadowColor, radius: 15, y: 10)
+            
+            // Camada de Gauges (Flutuando sobre o Mapa)
+            HStack(alignment: .top) {
+                // Esquerda: Velocidade
+                GlassGauge(
+                    title: "Velocidade",
+                    value: (currentPoint?.speed2D ?? 0) * 3.6,
+                    range: 0...100, // Deveria ser stats.maxSpeed, mas fixo para demo visual
+                    unit: "km/h",
+                    color: Theme.Colors.neonBlue,
+                    size: 160
+                )
+                
+                Spacer()
+                
+                // Direita: Força G
+                GlassGauge(
+                    title: "Força G",
+                    value: currentPoint?.acceleration?.magnitude ?? 0,
+                    range: 0...2.5,
+                    unit: "G",
+                    color: Theme.Colors.neonOrange,
+                    size: 160
+                )
+            }
+            .padding(20)
+        }
+    }
+    
+    private var playerControlsSection: some View {
+        GlassCard(depth: 1.0) {
+            VStack(spacing: 8) {
+                // Info de Tempo
+                HStack {
+                    Text(currentPoint?.formattedTime ?? "00:00")
+                        .font(.title3.monospacedDigit())
+                        .liquidNeon(color: .white)
+                    
+                    Spacer()
+                    
+                    Text(stats.duration.formattedTime)
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Slider (Scrubber) Customizado
+                HStack(spacing: 16) {
+                    Button(action: togglePlayback) {
+                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(Theme.primary)
+                            .shadow(color: Theme.primary.opacity(0.4), radius: 8)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Slider(
+                        value: Binding(
+                            get: { Double(currentIndex) },
+                            set: { currentIndex = Int($0) }
+                        ),
+                        in: 0...Double(max(0, dataPoints.count - 1))
+                    )
+                    .tint(Theme.primary)
                 }
             }
-            .padding(Theme.padding)
         }
-        .background(Theme.background)
     }
-}
-
-// MARK: - Preview Helper & Implementation
-
-// Extensão auxiliar para isolar a criação de dados mockados
-// Isso resolve o erro "Ambiguous expression" no #Preview
-extension TelemetryViewModel {
-    static var preview: TelemetryViewModel {
-        let vm = TelemetryViewModel()
-        
-        let points = [
-            TelemetryData(
-                timestamp: 0, latitude: -25.42, longitude: -49.27, altitude: 900, speed2D: 10, speed3D: 10,
-                acceleration: Vector3(x: 0, y: 0, z: 1), gravity: nil, gyro: nil,
-                cameraOrientation: nil, imageOrientation: nil,
-                iso: 100, shutterSpeed: 0.01, whiteBalance: 5500, whiteBalanceRGB: nil,
-                temperature: 30, audioDiagnostic: nil, faces: nil, scene: "URBAN"
-            ),
-            TelemetryData(
-                timestamp: 10, latitude: -25.43, longitude: -49.28, altitude: 910, speed2D: 15, speed3D: 15,
-                acceleration: Vector3(x: 0, y: 0, z: 1), gravity: nil, gyro: nil,
-                cameraOrientation: nil, imageOrientation: nil,
-                iso: 200, shutterSpeed: 0.02, whiteBalance: 5500, whiteBalanceRGB: nil,
-                temperature: 32, audioDiagnostic: nil, faces: nil, scene: "URBAN"
+    
+    private var secondaryStatsGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+            
+            // Distância
+            CompactGlassStat(
+                title: "Distância Total",
+                value: stats.totalDistance.asDistanceString,
+                icon: "map.fill",
+                color: Theme.Colors.neonGreen
             )
-        ]
-        
-        let stats = TelemetryStatistics(
-            duration: 120.5,
-            totalDistance: 1540,
-            maxSpeed: 22.5,
-            avgSpeed: 12.0,
-            maxAltitude: 950,
-            minAltitude: 900,
-            maxGForce: 1.2,
-            cameraName: "GoPro Hero 11 Black",
-            detectedScenes: ["URBAN"],
-            audioIssuesCount: 0,
-            maxTemperature: 45.0
-        )
-        
-        let session = TelemetrySession(
-            videoUrl: URL(fileURLWithPath: "/Videos/GoPro/GX0100.MP4"),
-            creationDate: Date(),
-            cameraModel: "GoPro Hero 11 Black",
-            dataPoints: points,
-            statistics: stats
-        )
-        
-        vm.session = session
-        return vm
+            
+            // Altitude Atual
+            CompactGlassStat(
+                title: "Altitude Atual",
+                value: String(format: "%.0f m", currentPoint?.altitude ?? 0),
+                icon: "mountain.2.fill",
+                color: Theme.Colors.neonPurple
+            )
+            
+            // Média Vel
+            CompactGlassStat(
+                title: "Velocidade Média",
+                value: stats.avgSpeed.asKmhString,
+                icon: "gauge.medium",
+                color: Theme.Colors.neonBlue
+            )
+        }
+    }
+    
+    // MARK: - Logic (Playback)
+    
+    private func togglePlayback() {
+        isPlaying.toggle()
+        if isPlaying {
+            startPlayback()
+        } else {
+            stopPlayback()
+        }
+    }
+    
+    private func startPlayback() {
+        // Timer simples para avançar o índice (~30fps visual)
+        playbackTimer?.invalidate()
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { _ in
+            Task { @MainActor in
+                if currentIndex < dataPoints.count - 1 {
+                    // Pula alguns pontos para acelerar se o vídeo for longo
+                    // Num app real, sincronizariamos com AVPlayer
+                    currentIndex += 5
+                } else {
+                    currentIndex = 0 // Loop ou stop
+                    stopPlayback()
+                }
+            }
+        }
+    }
+    
+    private func stopPlayback() {
+        isPlaying = false
+        playbackTimer?.invalidate()
+        playbackTimer = nil
     }
 }
 
-#Preview {
-    TelemetryView(viewModel: TelemetryViewModel.preview)
-        .frame(width: 900, height: 700)
+// MARK: - Subcomponents Locais
+
+/// Card pequeno para estatísticas secundárias (estilo Glass)
+struct CompactGlassStat: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        GlassCard(depth: 0.3) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.1))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: icon)
+                        .foregroundStyle(color)
+                        .font(.system(size: 14))
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(value)
+                        .font(Theme.Font.valueMedium)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    
+                    Text(title)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+}
+
+// MARK: - Preview Mock
+
+#Preview("Telemetry Dashboard") {
+    TelemetryView(viewModel: TelemetryViewModel())
+        .frame(width: 1000, height: 800)
 }

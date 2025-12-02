@@ -10,50 +10,63 @@ import AppKit
 
 struct Theme {
     
-    // MARK: - Colors
+    // MARK: - Neon Palette (Liquid Tints)
+    // Cores vibrantes projetadas para "brilhar" dentro dos componentes de vidro
     
-    static let primary = Color.blue
-    static let secondary = Color.gray
+    struct Colors {
+        static let neonBlue = Color(red: 0.0, green: 0.8, blue: 1.0)      // Ciano Elétrico
+        static let neonPurple = Color(red: 0.7, green: 0.3, blue: 1.0)    // Roxo Fluorescente
+        static let neonOrange = Color(red: 1.0, green: 0.6, blue: 0.0)    // Laranja Neon
+        static let neonRed = Color(red: 1.0, green: 0.2, blue: 0.3)       // Vermelho Laser
+        static let neonGreen = Color(red: 0.2, green: 1.0, blue: 0.5)     // Verde Matrix
+        static let neonYellow = Color(red: 1.0, green: 0.9, blue: 0.0)    // Amarelo Sol
+        static let neonIndigo = Color(red: 0.4, green: 0.0, blue: 1.0)    // Índigo Profundo
+        static let glassWhite = Color.white.opacity(0.9)
+    }
     
-    // Cores de Fundo do Sistema
-    static let background = Color(nsColor: .windowBackgroundColor)
-    static let surface = Color(nsColor: .controlBackgroundColor)
-    static let surfaceSecondary = Color(nsColor: .underPageBackgroundColor)
+    // MARK: - Semantic Colors
+    
+    static let primary = Colors.neonBlue
+    static let secondary = Color.gray.opacity(0.8)
     
     // Cores de Status
-    static let success = Color.green
-    static let warning = Color.orange
-    static let error = Color.red
+    static let success = Colors.neonGreen
+    static let warning = Colors.neonOrange
+    static let error = Colors.neonRed
     
-    // MARK: - Sensor Styling (CORREÇÃO AQUI)
+    // Backgrounds (Para janelas que precisam de um fundo base atrás do vidro)
+    static let background = Color(nsColor: .windowBackgroundColor)
+    static let surface = Color.clear // LiquidGlass usa blur, não cor sólida
+    
+    // MARK: - Sensor Styling (Atualizado)
     
     struct Data {
         static func color(for type: TelemetryType) -> Color {
             switch type {
-            case .gps: return .blue
-            case .accelerometer: return .orange
-            case .gyroscope: return .purple
-            case .gravity: return .pink           // Novo
-            case .orientation: return .indigo     // Novo
-            case .temperature: return .red        // Novo
-            case .camera: return .teal    // Renomeado de 'camera'
-            case .environment: return .green      // Novo (Rosto/Cena)
-            case .audio: return .yellow           // Novo
-            case .unknown: return .gray
+            case .gps: return Colors.neonBlue
+            case .accelerometer: return Colors.neonOrange
+            case .gyroscope: return Colors.neonIndigo
+            case .gravity: return Color.pink
+            case .orientation: return Colors.neonPurple
+            case .temperature: return Colors.neonRed
+            case .camera: return Colors.neonYellow
+            case .environment: return Colors.neonGreen
+            case .audio: return Color.teal
+            case .unknown: return Color.gray
             }
         }
         
         static func icon(for type: TelemetryType) -> String {
             switch type {
             case .gps: return "location.fill"
-            case .accelerometer: return "gauge.with.dots.needle.bottom.50percent"
+            case .accelerometer: return "speedometer"
             case .gyroscope: return "gyroscope"
-            case .gravity: return "arrow.down.to.line"
+            case .gravity: return "arrow.down.to.line.compact"
             case .orientation: return "safari.fill"
-            case .temperature: return "thermometer"
+            case .temperature: return "thermometer.sun.fill"
             case .camera: return "camera.aperture"
-            case .environment: return "tree.fill"
-            case .audio: return "waveform"
+            case .environment: return "sparkles"
+            case .audio: return "waveform.path"
             case .unknown: return "questionmark.square.dashed"
             }
         }
@@ -74,70 +87,52 @@ struct Theme {
         
         static func color(for format: ExportFormat) -> Color {
             switch format {
-            case .mgjson: return .purple
-            case .kml: return .green
-            default: return .blue
+            case .mgjson: return Colors.neonPurple
+            case .kml: return Colors.neonGreen
+            case .csv: return Colors.neonOrange
+            default: return Colors.neonBlue
             }
         }
     }
     
-    // MARK: - Layout & Fonts
+    // MARK: - Layout & Fonts (Modernizado)
     
-    static let padding: CGFloat = 16
-    static let cornerRadius: CGFloat = 12
-    static let smallCornerRadius: CGFloat = 8
+    static let padding: CGFloat = 20
+    static let cornerRadius: CGFloat = 20 // Mais arredondado (Squircle)
+    static let smallCornerRadius: CGFloat = 12
     
     struct Spacing {
         static let small: CGFloat = 8
         static let medium: CGFloat = 16
         static let large: CGFloat = 24
-        static let extraLarge: CGFloat = 32
+        static let extraLarge: CGFloat = 40
     }
     
-    static let shadowRadius: CGFloat = 4
-    static let shadowColor = Color.black.opacity(0.1)
+    // Sombras agora são coloridas (glow), definido no GlassModifier
+    static let shadowRadius: CGFloat = 10
+    static let shadowColor = Color.black.opacity(0.2)
     
     struct Font {
-        static let valueLarge = SwiftUI.Font.system(size: 28, weight: .bold, design: .rounded)
-        static let valueMedium = SwiftUI.Font.system(size: 18, weight: .semibold, design: .rounded)
-        static let label = SwiftUI.Font.caption.weight(.medium)
+        // Tipografia arredondada para números e títulos (Friendly/Modern)
+        static let valueLarge = SwiftUI.Font.system(size: 32, weight: .bold, design: .rounded)
+        static let valueMedium = SwiftUI.Font.system(size: 20, weight: .semibold, design: .rounded)
+        static let label = SwiftUI.Font.caption.weight(.semibold)
+        
+        // Mono para dados técnicos precisos (Lat/Lon, ISO)
         static let mono = SwiftUI.Font.system(.body, design: .monospaced)
-        static let title = SwiftUI.Font.title3.weight(.bold)
+        
+        static let title = SwiftUI.Font.title2.weight(.bold)
+        static let display = SwiftUI.Font.system(size: 48, weight: .heavy, design: .rounded)
     }
 }
 
-// MARK: - View Modifiers
-
-extension View {
-    func cardStyle() -> some View {
-        self
-            .background(Theme.surface)
-            .cornerRadius(Theme.cornerRadius)
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cornerRadius)
-                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
-            )
-            .shadow(color: Theme.shadowColor, radius: 2, x: 0, y: 1)
-    }
-    
-    func badgeStyle(color: Color) -> some View {
-        self
-            .font(.caption2.weight(.bold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.15))
-            .foregroundColor(color)
-            .cornerRadius(4)
-    }
-}
-
-// MARK: - AppTheme UI Extension
+// MARK: - UI Extensions
 
 extension AppTheme {
     var systemColorScheme: ColorScheme? {
         switch self {
         case .dark: return .dark
-        case .light: return .light
+        case .light: return .light // LiquidGlass funciona melhor no Dark, mas suporta Light
         case .auto: return nil
         }
     }
